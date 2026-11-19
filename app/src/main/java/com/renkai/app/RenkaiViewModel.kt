@@ -1,20 +1,21 @@
 package com.renkai.app
 
 import android.app.Application
-import android.content.ComponentName
 import android.net.Uri
-import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
-import androidx.media3.session.MediaController
-import androidx.media3.session.SessionToken
-import com.google.common.util.concurrent.ListenableFuture
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DefaultDataSource
+import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import com.renkai.app.data.CatalogApi
 import com.renkai.app.data.Episode
 import com.renkai.app.data.Title
@@ -24,11 +25,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.filterNotNull
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withTimeoutOrNull
 
 data class PlayTarget(val title: Title, val episode: Episode)
 
@@ -40,18 +38,36 @@ data class UiState(
     val favoriteIds: List<String> = emptyList(),
 )
 
+@OptIn(UnstableApi::class)
 class RenkaiViewModel(app: Application) : AndroidViewModel(app) {
     private val store = UserStore(app)
     private val gate = PlaybackRequestGate()
+    private val exoPlayer = ExoPlayer.Builder(app)
+        .setMediaSourceFactory(
+            DefaultMediaSourceFactory(
+                DefaultDataSource.Factory(
+                    app,
+                    CdnFallbackDataSourceFactory(DefaultHttpDataSource.Factory()),
+                ),
+            ),
+        )
+        .setTrackSelector(buildTrackSelector(app))
+        .setAudioAttributes(
+            AudioAttributes.Builder()
+                .setUsage(C.USAGE_MEDIA)
+                .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
+                .build(),
+            /* handleAudioFocus = */ true,
+        )
+        .setHandleAudioBecomingNoisy(true)
+        .build()
     private val _state = MutableStateFlow(UiState())
     val state: StateFlow<UiState> = _state.asStateFlow()
 
-    private val _player = MutableStateFlow<Player?>(null)
-    /** Pemutar (MediaController ke PlaybackService); null sampai tersambung. */
+    private val _player = MutableStateFlow<Player?>(exoPlayer)
+    /** Player dimiliki ViewModel dan dilepas saat pemilik layar berakhir. */
     val player: StateFlow<Player?> = _player.asStateFlow()
 
-    private var controllerFuture: ListenableFuture<MediaController>? = null
-    private var controllerConnecting = false
     private var positions: Map<String, Long> = emptyMap()
     private val positionsReady = CompletableDeferred<Unit>()
     private var autoDone = false
@@ -72,7 +88,7 @@ class RenkaiViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     init {
-        connectController()
+        exoPlayer.addListener(playerListener)
         loadCatalog()
         viewModelScope.launch {
             store.favorites.collect { ids -> _state.update { it.copy(favoriteIds = ids) } }
@@ -96,25 +112,6 @@ class RenkaiViewModel(app: Application) : AndroidViewModel(app) {
                 if (_player.value?.isPlaying == true) saveProgress()
             }
         }
-    }
-
-    private fun connectController() {
-        if (_player.value != null || controllerConnecting) return
-        controllerConnecting = true
-        val app = getApplication<Application>()
-        val token = SessionToken(app, ComponentName(app, PlaybackService::class.java))
-        val future = MediaController.Builder(app, token).buildAsync()
-        controllerFuture = future
-        future.addListener({
-            val controller = try { future.get() } catch (e: Exception) { null }
-            controllerConnecting = false
-            if (controller != null) {
-                controller.addListener(playerListener)
-                _player.value = controller
-            } else {
-                _state.update { it.copy(playbackError = "Layanan pemutar tidak tersedia") }
-            }
-        }, ContextCompat.getMainExecutor(app))
     }
 
     fun loadCatalog(force: Boolean = false) {
@@ -141,16 +138,12 @@ class RenkaiViewModel(app: Application) : AndroidViewModel(app) {
 
     fun play(t: Title, ep: Episode) {
         saveProgress() // simpan posisi episode sebelumnya
-        if (_player.value == null) connectController()
         val requestId = gate.issue()
         _state.update { it.copy(playing = PlayTarget(t, ep), playbackError = null) }
         viewModelScope.launch {
             try {
                 positionsReady.await()
                 val url = CatalogApi.pickDoor(ep.playlist)
-                val controller = withTimeoutOrNull(CONTROLLER_TIMEOUT_MS) {
-                    _player.filterNotNull().first()
-                } ?: throw IllegalStateException("Layanan pemutar tidak merespons")
                 if (!gate.isCurrent(requestId)) return@launch
                 val mime = when {
                     url.contains(".m3u8", true) -> MimeTypes.APPLICATION_M3U8
@@ -169,9 +162,9 @@ class RenkaiViewModel(app: Application) : AndroidViewModel(app) {
                     .setMediaMetadata(meta)
                     .apply { mime?.let { setMimeType(it) } }
                     .build()
-                controller.setMediaItem(item, positions[key] ?: 0L) // lanjut dari posisi terakhir
-                controller.prepare()
-                controller.play()
+                exoPlayer.setMediaItem(item, positions[key] ?: 0L) // lanjut dari posisi terakhir
+                exoPlayer.prepare()
+                exoPlayer.play()
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (e: Exception) {
@@ -204,12 +197,8 @@ class RenkaiViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch { store.toggleFavorite(t.id) }
     }
 
-    fun onAppForegrounded() {
-        PlaybackBackgroundPolicy.markAppForeground()
-    }
-
     fun onAppBackgrounded() {
-        PlaybackBackgroundPolicy.markAppBackground()
+        gate.invalidate()
         saveProgress()
         _player.value?.pause()
     }
@@ -234,13 +223,12 @@ class RenkaiViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     override fun onCleared() {
-        controllerFuture?.let { MediaController.releaseFuture(it) }
+        exoPlayer.removeListener(playerListener)
+        exoPlayer.release()
         super.onCleared()
     }
 
     companion object {
-        private const val CONTROLLER_TIMEOUT_MS = 15_000L
-
         private fun positionKey(titleId: String, ep: Int) = "$titleId|$ep"
     }
 }

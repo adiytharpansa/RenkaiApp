@@ -49,11 +49,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import androidx.media3.common.MediaItem
-import androidx.media3.common.MimeTypes
-import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
-import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
 import com.renkai.app.data.CatalogApi
@@ -73,7 +69,6 @@ fun RenkaiApp(
     val player by vm.player.collectAsStateWithLifecycle()
     var selectedId by rememberSaveable { mutableStateOf<String?>(null) }
     var tab by rememberSaveable { mutableIntStateOf(0) }
-    var askedNotif by rememberSaveable { mutableStateOf(false) }
 
     val cat = state.catalog
     val cur = state.playing
@@ -85,20 +80,6 @@ fun RenkaiApp(
     }
     val sel = cat?.firstOrNull { it.id == selectedId }
 
-    // Izin notifikasi (Android 13+) diminta sekali, saat pertama kali memutar.
-    val notifLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
-        androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
-    ) { }
-    LaunchedEffect(cur != null) {
-        if (cur != null && !askedNotif && android.os.Build.VERSION.SDK_INT >= 33) {
-            askedNotif = true
-            val granted = androidx.core.content.ContextCompat.checkSelfPermission(
-                context, android.Manifest.permission.POST_NOTIFICATIONS,
-            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
-            if (!granted) notifLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
-        }
-    }
-
     // Ekstra intent untuk uji otomatis: langsung putar judul/episode setelah katalog siap.
     LaunchedEffect(cat) { vm.autoPlayOnce(autoTitle, autoEp) }
 
@@ -106,13 +87,11 @@ fun RenkaiApp(
     DisposableEffect(owner) {
         val o = LifecycleEventObserver { _, e ->
             when (e) {
-                Lifecycle.Event.ON_START -> vm.onAppForegrounded()
-                Lifecycle.Event.ON_STOP -> vm.onAppBackgrounded()
+                Lifecycle.Event.ON_PAUSE -> vm.onAppBackgrounded()
                 else -> Unit
             }
         }
         owner.lifecycle.addObserver(o)
-        if (owner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) vm.onAppForegrounded()
         onDispose { owner.lifecycle.removeObserver(o) }
     }
 

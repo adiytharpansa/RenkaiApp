@@ -7,7 +7,7 @@ Aplikasi Android native (Kotlin + Jetpack Compose + Media3) untuk streaming anim
 - Subtitle native Inggris + Indonesia dari manifest HLS, dipilih otomatis mengikuti bahasa aplikasi (tanpa pilihan manual di pemutar)
 - Pemutar tangguh: pintu CDN dipilih otomatis (jsDelivr beberapa edge / raw) bila satu pintu gagal
 - Koleksi tersimpan permanen, posisi episode disimpan untuk dilanjutkan, dan episode berikutnya diputar otomatis
-- Layanan sesi media Android menjaga kontrol pemutar; audio dijeda saat aplikasi ke latar belakang dan tidak dapat dimulai ulang dari kontrol sistem sampai aplikasi aktif kembali
+- Audio otomatis dijeda saat aplikasi kehilangan fokus; pemutaran tidak berjalan di latar belakang
 - Tema terang/gelap otomatis mengikuti sistem, aksen kuning (#FFD60A)
 - HLS (.m3u8) dan DASH (.mpd) via Media3 ExoPlayer; landscape = layar penuh otomatis
 
