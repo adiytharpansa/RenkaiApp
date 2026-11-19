@@ -62,7 +62,7 @@ import kotlinx.coroutines.launch
 private data class PlayTarget(val title: Title, val episode: Episode)
 
 @Composable
-fun RenkaiApp() {
+fun RenkaiApp(autoTitle: String? = null, autoEp: Int = 1) {
     val context = LocalContext.current
     val view = LocalView.current
     val scope = rememberCoroutineScope()
@@ -114,6 +114,17 @@ fun RenkaiApp() {
             player.prepare(); player.play()
         }
     }
+    var autoDone by remember { mutableStateOf(false) }
+    LaunchedEffect(catalog) {
+        val list = catalog
+        if (list != null && autoTitle != null && !autoDone) {
+            autoDone = true
+            val t = list.firstOrNull { it.id == autoTitle || it.title.contains(autoTitle, ignoreCase = true) }
+            val ep = t?.episodes?.firstOrNull { it.number == autoEp } ?: t?.episodes?.firstOrNull()
+            if (t != null && ep != null) play(t, ep)
+        }
+    }
+
     fun playLink(url: String) {
         val t = Title(
             id = "tautan-kustom", title = "Tautan kustom",
