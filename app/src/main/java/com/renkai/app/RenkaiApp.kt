@@ -66,6 +66,7 @@ fun RenkaiApp(autoTitle: String? = null, autoEp: Int = 1) {
     val context = LocalContext.current
     val view = LocalView.current
     val scope = rememberCoroutineScope()
+    val playbackRequests = remember { PlaybackRequestGate() }
     val player = remember { ExoPlayer.Builder(context).build().apply { playWhenReady = true } }
     var error by remember { mutableStateOf<String?>(null) }
     var playing by remember { mutableStateOf<PlayTarget?>(null) }
@@ -103,8 +104,10 @@ fun RenkaiApp(autoTitle: String? = null, autoEp: Int = 1) {
     fun play(t: Title, ep: Episode) {
         error = null
         playing = PlayTarget(t, ep)
+        val requestId = playbackRequests.issue()
         scope.launch {
             val url = CatalogApi.pickDoor(ep.playlist)
+            if (!playbackRequests.isCurrent(requestId)) return@launch
             val mime = when {
                 url.contains(".m3u8", true) -> MimeTypes.APPLICATION_M3U8
                 url.contains(".mpd", true) -> MimeTypes.APPLICATION_MPD
@@ -136,7 +139,7 @@ fun RenkaiApp(autoTitle: String? = null, autoEp: Int = 1) {
         val i = favs.indexOfFirst { it.id == t.id }
         if (i >= 0) favs.removeAt(i) else favs.add(t)
     }
-    fun closePlayer() { player.pause(); playing = null }
+    fun closePlayer() { playbackRequests.invalidate(); player.pause(); playing = null }
 
     BackHandler(enabled = playing != null) { closePlayer() }
     BackHandler(enabled = playing == null && selected != null) { selected = null }

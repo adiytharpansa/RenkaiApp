@@ -5,7 +5,7 @@ jobs:
   test:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -55,12 +55,3 @@ jobs:
             play1.png
             play2.png
             fp.txt
-      - name: Unggah tangkapan layar ke Release ci-shots
-        if: always()
-        run: |
-          gh release create ci-shots home.png play1.png play2.png fp.txt \
-            --prerelease --title "Tangkapan layar uji emulator" \
-            --notes "Bukti uji mandiri di emulator CI." \
-          || gh release upload ci-shots home.png play1.png play2.png fp.txt --clobber
-        env:
-          GH_TOKEN: ${{ github.token }}
