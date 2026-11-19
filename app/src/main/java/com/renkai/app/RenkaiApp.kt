@@ -5,21 +5,26 @@ import android.content.res.Configuration
 import android.view.LayoutInflater
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.outlined.BookmarkBorder
+import androidx.compose.material.icons.outlined.DateRange
+import androidx.compose.material.icons.outlined.Download
+import androidx.compose.material.icons.outlined.Home
+import androidx.compose.material.icons.outlined.PersonOutline
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.DateRange
 import androidx.compose.material.icons.rounded.Download
-import androidx.compose.material.icons.rounded.Favorite
-import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.PlayArrow
@@ -33,6 +38,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -40,6 +46,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -142,23 +149,69 @@ fun RenkaiApp(
         else -> Scaffold(
             containerColor = MaterialTheme.colorScheme.background,
             bottomBar = {
-                NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
-                    listOf(
-                        Triple(0, "Beranda", Icons.Rounded.Home),
-                        Triple(1, "Jadwal", Icons.Rounded.DateRange),
-                        Triple(2, "Koleksi", Icons.Rounded.Favorite),
-                        Triple(3, "Unduhan", Icons.Rounded.Download),
-                        Triple(4, "Akun", Icons.Rounded.Person),
-                    ).forEach { (i, label, icon) ->
-                        NavigationBarItem(
-                            selected = !searchOpen && tab == i,
-                            onClick = { tab = i; searchOpen = false },
-                            icon = { Icon(icon, contentDescription = label) },
-                            colors = NavigationBarItemDefaults.colors(
-                                indicatorColor = MaterialTheme.colorScheme.primary,
-                                selectedIconColor = MaterialTheme.colorScheme.onPrimary,
-                            ),
-                        )
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .background(MaterialTheme.colorScheme.background)
+                        .navigationBarsPadding()
+                        .padding(horizontal = 20.dp, vertical = 8.dp),
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(72.dp)
+                            .shadow(10.dp, RoundedCornerShape(28.dp))
+                            .clip(RoundedCornerShape(28.dp))
+                            .background(MaterialTheme.colorScheme.surface)
+                            .border(
+                                1.dp,
+                                MaterialTheme.colorScheme.outline.copy(alpha = 0.65f),
+                                RoundedCornerShape(28.dp),
+                            )
+                            .padding(horizontal = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        listOf(
+                            Triple(0, "Beranda", Icons.Outlined.Home),
+                            Triple(1, "Jadwal", Icons.Outlined.DateRange),
+                            Triple(2, "Koleksi", Icons.Outlined.BookmarkBorder),
+                            Triple(3, "Unduhan", Icons.Outlined.Download),
+                            Triple(4, "Akun", Icons.Outlined.PersonOutline),
+                        ).forEach { (i, label, icon) ->
+                            val selected = !searchOpen && tab == i
+                            Column(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .fillMaxHeight()
+                                    .selectable(
+                                        selected = selected,
+                                        onClick = { tab = i; searchOpen = false },
+                                        role = Role.Tab,
+                                    )
+                                    .padding(vertical = 6.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.Center,
+                            ) {
+                                Icon(
+                                    icon,
+                                    contentDescription = label,
+                                    modifier = Modifier.size(32.dp),
+                                    tint = if (selected) MaterialTheme.colorScheme.primary
+                                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                Spacer(Modifier.height(7.dp))
+                                Box(
+                                    Modifier
+                                        .width(38.dp)
+                                        .height(5.dp)
+                                        .clip(CircleShape)
+                                        .background(
+                                            if (selected) MaterialTheme.colorScheme.primary
+                                            else Color.Transparent,
+                                        ),
+                                )
+                            }
+                        }
                     }
                 }
             },
