@@ -18,16 +18,21 @@ import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.Home
+import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.rounded.SkipNext
+import androidx.compose.material.icons.rounded.SkipPrevious
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
@@ -36,7 +41,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -49,25 +53,37 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
+import coil.compose.AsyncImage
+import com.renkai.app.data.CatalogApi
+import com.renkai.app.data.Episode
+import com.renkai.app.data.Title
+import kotlinx.coroutines.launch
 
-data class Stream(val title: String, val type: String, val url: String, val tone: Color)
-
-private val streams = listOf(
-    Stream("Apple Bip-Bop", "HLS", "https://devstreaming-cdn.apple.com/videos/streaming/examples/img_bipbop_adv_example_ts/master.m3u8", Color(0xFF3D3200)),
-    Stream("Big Buck Bunny", "HLS", "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8", Color(0xFF26323A)),
-    Stream("Big Buck Bunny", "DASH", "https://dash.akamaized.net/akamai/bbb_30fps/bbb_30fps.mpd", Color(0xFF4A3F00)),
-    Stream("Tears of Steel", "DASH", "https://storage.googleapis.com/wvmedia/clear/h264/tears/tears.mpd", Color(0xFF2E2A3A)),
-)
+private data class PlayTarget(val title: Title, val episode: Episode)
 
 @Composable
 fun RenkaiApp() {
     val context = LocalContext.current
     val view = LocalView.current
+    val scope = rememberCoroutineScope()
     val player = remember { ExoPlayer.Builder(context).build().apply { playWhenReady = true } }
     var error by remember { mutableStateOf<String?>(null) }
-    var playing by remember { mutableStateOf<Stream?>(null) }
+    var playing by remember { mutableStateOf<PlayTarget?>(null) }
+    var selected by remember { mutableStateOf<Title?>(null) }
     var tab by rememberSaveable { mutableIntStateOf(0) }
-    val favs = remember { mutableStateListOf<Stream>() }
+    val favs = remember { mutableStateListOf<Title>() }
+
+    var catalog by remember { mutableStateOf<List<Title>?>(null) }
+    var loadError by remember { mutableStateOf<String?>(null) }
+    var retryKey by remember { mutableIntStateOf(0) }
+    LaunchedEffect(retryKey) {
+        try {
+            catalog = CatalogApi.fetchCatalog(force = retryKey > 0)
+            loadError = null
+        } catch (e: Exception) {
+            loadError = CatalogApi.lastError ?: (e.message ?: "Gagal memuat katalog")
+        }
+    }
 
     DisposableEffect(player) {
         val l = object : Player.Listener {
@@ -84,24 +100,35 @@ fun RenkaiApp() {
         onDispose { owner.lifecycle.removeObserver(o) }
     }
 
-    fun open(s: Stream) {
+    fun play(t: Title, ep: Episode) {
         error = null
-        val mime = when {
-            s.url.contains(".m3u8", true) -> MimeTypes.APPLICATION_M3U8
-            s.url.contains(".mpd", true) -> MimeTypes.APPLICATION_MPD
-            else -> null
+        playing = PlayTarget(t, ep)
+        scope.launch {
+            val url = CatalogApi.pickDoor(ep.playlist)
+            val mime = when {
+                url.contains(".m3u8", true) -> MimeTypes.APPLICATION_M3U8
+                url.contains(".mpd", true) -> MimeTypes.APPLICATION_MPD
+                else -> null
+            }
+            player.setMediaItem(MediaItem.Builder().setUri(url).apply { mime?.let { setMimeType(it) } }.build())
+            player.prepare(); player.play()
         }
-        player.setMediaItem(MediaItem.Builder().setUri(s.url).apply { mime?.let { setMimeType(it) } }.build())
-        player.prepare(); player.play()
-        playing = s
     }
-    fun toggleFav(s: Stream) {
-        val i = favs.indexOfFirst { it.url == s.url }
-        if (i >= 0) favs.removeAt(i) else favs.add(s)
+    fun playLink(url: String) {
+        val t = Title(
+            id = "tautan-kustom", title = "Tautan kustom",
+            episodes = listOf(Episode(1, url)),
+        )
+        play(t, t.episodes[0])
     }
-    fun close() { player.pause(); playing = null }
+    fun toggleFav(t: Title) {
+        val i = favs.indexOfFirst { it.id == t.id }
+        if (i >= 0) favs.removeAt(i) else favs.add(t)
+    }
+    fun closePlayer() { player.pause(); playing = null }
 
-    BackHandler(enabled = playing != null) { close() }
+    BackHandler(enabled = playing != null) { closePlayer() }
+    BackHandler(enabled = playing == null && selected != null) { selected = null }
 
     val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
     val fullscreen = landscape && playing != null
@@ -115,9 +142,26 @@ fun RenkaiApp() {
     }
 
     val cur = playing
+    val sel = selected
+    val cat = catalog
     when {
         fullscreen -> Box(Modifier.fillMaxSize().background(Color.Black)) { PlayerSurface(player, Modifier.fillMaxSize()) }
-        cur != null -> PlayerScreen(player, cur, error, favs.any { it.url == cur.url }, { close() }, { toggleFav(cur) }, ::open)
+        cur != null -> PlayerScreen(
+            player, cur, error,
+            favs.any { it.id == cur.title.id },
+            onBack = { closePlayer() },
+            onFav = { toggleFav(cur.title) },
+            onPlayEp = { ep -> play(cur.title, ep) },
+        )
+        sel != null -> DetailScreen(
+            sel,
+            favs.any { it.id == sel.id },
+            onBack = { selected = null },
+            onFav = { toggleFav(sel) },
+            onPlayEp = { ep -> play(sel, ep) },
+        )
+        cat == null && loadError == null -> LoadingScreen()
+        cat == null -> ErrorScreen(loadError ?: "Gagal memuat katalog") { retryKey++ }
         else -> Scaffold(
             containerColor = MaterialTheme.colorScheme.background,
             bottomBar = {
@@ -139,9 +183,9 @@ fun RenkaiApp() {
         ) { pad ->
             Box(Modifier.padding(pad).statusBarsPadding()) {
                 when (tab) {
-                    0 -> HomeTab(favs, ::open, ::toggleFav)
-                    1 -> SearchTab(::open)
-                    else -> CollectionTab(favs, ::open)
+                    0 -> HomeTab(cat, favs, onSelect = { selected = it }, onPlay = { t, ep -> play(t, ep) }, onFav = ::toggleFav)
+                    1 -> SearchTab(cat, onSelect = { selected = it }, onPlayLink = ::playLink)
+                    else -> CollectionTab(favs, onSelect = { selected = it })
                 }
             }
         }
@@ -149,70 +193,237 @@ fun RenkaiApp() {
 }
 
 @Composable
-private fun HomeTab(favs: List<Stream>, onOpen: (Stream) -> Unit, onFav: (Stream) -> Unit) {
-    LazyColumn(contentPadding = PaddingValues(bottom = 16.dp), verticalArrangement = Arrangement.spacedBy(22.dp)) {
-        item { Logo(Modifier.padding(start = 20.dp, top = 16.dp)) }
-        item { Hero(streams[0], favs.any { it.url == streams[0].url }, onOpen, onFav) }
-        item { Section("Rekomendasi") { LazyRow(contentPadding = PaddingValues(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) { items(streams) { WideCard(it, onOpen) } } } }
-        item { Section("Stream HLS") { PosterRow(streams.filter { it.type == "HLS" }, onOpen) } }
-        item { Section("Stream DASH") { PosterRow(streams.filter { it.type == "DASH" }, onOpen) } }
-    }
-}
-
-@Composable
-private fun SearchTab(onOpen: (Stream) -> Unit) {
-    var q by rememberSaveable { mutableStateOf("") }
-    val isLink = q.trim().startsWith("http", true)
-    Column(Modifier.padding(horizontal = 20.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        Logo()
-        OutlinedTextField(
-            value = q, onValueChange = { q = it }, singleLine = true, modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(16.dp), label = { Text("Cari judul atau tempel link .m3u8 / .mpd") },
-        )
-        if (isLink) {
-            val url = q.trim()
-            Button(
-                onClick = { onOpen(Stream("Link kustom", if (url.contains(".mpd", true)) "DASH" else "HLS", url, Color(0xFF3D3200))) },
-                modifier = Modifier.fillMaxWidth().height(52.dp), shape = RoundedCornerShape(16.dp),
-            ) { Icon(Icons.Rounded.PlayArrow, null); Spacer(Modifier.size(6.dp)); Text("Putar link", fontWeight = FontWeight.Bold) }
-        } else {
-            streams.filter { q.isBlank() || it.title.contains(q, true) || it.type.contains(q, true) }
-                .forEach { ListRow(it, onOpen) }
+private fun LoadingScreen() {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            Logo()
+            CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
+            Text("Memuat katalog…", color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
 
 @Composable
-private fun CollectionTab(favs: List<Stream>, onOpen: (Stream) -> Unit) {
-    Column(Modifier.padding(horizontal = 20.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Logo()
-        Text("Koleksi", fontSize = 20.sp, fontWeight = FontWeight.Bold)
-        if (favs.isEmpty()) Text("Belum ada koleksi. Tekan “Koleksi” pada stream untuk menyimpannya.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-        favs.forEach { ListRow(it, onOpen) }
+private fun ErrorScreen(message: String, onRetry: () -> Unit) {
+    Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            Logo()
+            Text("Katalog belum bisa dimuat.", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+            Text(message, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp, maxLines = 4, overflow = TextOverflow.Ellipsis)
+            Button(onClick = onRetry, shape = RoundedCornerShape(14.dp)) {
+                Icon(Icons.Rounded.Refresh, null); Spacer(Modifier.size(6.dp)); Text("Coba lagi", fontWeight = FontWeight.Bold)
+            }
+        }
+    }
+}
+
+@Composable
+private fun HomeTab(
+    catalog: List<Title>,
+    favs: List<Title>,
+    onSelect: (Title) -> Unit,
+    onPlay: (Title, Episode) -> Unit,
+    onFav: (Title) -> Unit,
+) {
+    val hero = remember(catalog) { catalog.filter { it.banner != null }.maxByOrNull { it.score ?: 0.0 } }
+    val trending = remember(catalog) { catalog.sortedByDescending { it.score ?: 0.0 }.take(20) }
+    val newest = remember(catalog) { catalog.asReversed().take(30) }
+    val movies = remember(catalog) { catalog.filter { it.episodes.size == 1 }.take(24) }
+    val topGenres = remember(catalog) {
+        catalog.flatMap { it.genres }.groupingBy { it }.eachCount().entries
+            .sortedByDescending { it.value }.take(4).map { it.key }
+    }
+    LazyColumn(contentPadding = PaddingValues(bottom = 16.dp), verticalArrangement = Arrangement.spacedBy(22.dp)) {
+        item { Logo(Modifier.padding(start = 20.dp, top = 16.dp)) }
+        if (hero != null) {
+            item { Hero(hero, favs.any { it.id == hero.id }, onPlay = { ep -> onPlay(hero, ep) }, onFav = { onFav(hero) }, onSelect = { onSelect(hero) }) }
+        }
+        item { Section("Sedang Tren") { LazyRow(contentPadding = PaddingValues(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) { items(trending) { WideCard(it, onSelect) } } } }
+        item { Section("Baru Ditambahkan") { PosterRow(newest, onSelect) } }
+        for (g in topGenres) {
+            val row = catalog.filter { g in it.genres }.take(24)
+            if (row.size >= 4) {
+                item { Section(g) { PosterRow(row, onSelect) } }
+            }
+        }
+        if (movies.isNotEmpty()) {
+            item { Section("Film & Spesial") { PosterRow(movies, onSelect) } }
+        }
+        item {
+            Text(
+                "${catalog.size} judul · ${catalog.sumOf { it.episodes.size }} episode",
+                Modifier.padding(horizontal = 20.dp),
+                color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp,
+            )
+        }
+    }
+}
+
+@Composable
+private fun SearchTab(catalog: List<Title>, onSelect: (Title) -> Unit, onPlayLink: (String) -> Unit) {
+    var q by rememberSaveable { mutableStateOf("") }
+    val isLink = q.trim().startsWith("http", true)
+    val results = remember(q, catalog) {
+        if (q.isBlank()) emptyList()
+        else catalog.filter { it.title.contains(q, true) || it.genres.any { g -> g.contains(q, true) } }.take(60)
+    }
+    LazyColumn(Modifier.padding(horizontal = 20.dp), contentPadding = PaddingValues(vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        item { Logo() }
+        item {
+            OutlinedTextField(
+                value = q, onValueChange = { q = it }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp), label = { Text("Cari judul, genre, atau tempel link .m3u8 / .mpd") },
+            )
+        }
+        if (isLink) {
+            val url = q.trim()
+            item {
+                Button(
+                    onClick = { onPlayLink(url) },
+                    modifier = Modifier.fillMaxWidth().height(52.dp), shape = RoundedCornerShape(16.dp),
+                ) { Icon(Icons.Rounded.PlayArrow, null); Spacer(Modifier.size(6.dp)); Text("Putar link", fontWeight = FontWeight.Bold) }
+            }
+        } else if (q.isBlank()) {
+            item { Text("Ketik untuk mencari di ${catalog.size} judul.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        } else if (results.isEmpty()) {
+            item { Text("Tidak ada judul yang cocok dengan “$q”.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        } else {
+            items(results) { t -> ListRow(t, onSelect) }
+        }
+    }
+}
+
+@Composable
+private fun CollectionTab(favs: List<Title>, onSelect: (Title) -> Unit) {
+    LazyColumn(Modifier.padding(horizontal = 20.dp), contentPadding = PaddingValues(vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        item { Logo() }
+        item { Text("Koleksi", fontSize = 20.sp, fontWeight = FontWeight.Bold) }
+        if (favs.isEmpty()) {
+            item { Text("Belum ada koleksi. Buka judul lalu tekan “Koleksi” untuk menyimpannya di sini (tersimpan selama aplikasi terbuka).", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        } else {
+            items(favs) { t -> ListRow(t, onSelect) }
+        }
+    }
+}
+
+@Composable
+private fun DetailScreen(
+    t: Title, fav: Boolean,
+    onBack: () -> Unit, onFav: () -> Unit, onPlayEp: (Episode) -> Unit,
+) {
+    LazyColumn(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).statusBarsPadding()) {
+        item {
+            Box(Modifier.fillMaxWidth().height(210.dp).background(Color.Black)) {
+                if (t.banner != null) {
+                    AsyncImage(t.banner, t.title, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                }
+                Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.65f)))))
+                IconButton(onClick = onBack, modifier = Modifier.padding(4.dp)) {
+                    Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Kembali", tint = Color.White)
+                }
+                Text(
+                    t.title, Modifier.align(Alignment.BottomStart).padding(20.dp),
+                    color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Black, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+        item {
+            Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                val meta = listOfNotNull(
+                    t.matchPercent?.let { "$it% cocok" },
+                    t.year?.toString(),
+                    t.statusLabel,
+                    "${t.episodes.size} episode",
+                ).joinToString(" · ")
+                if (meta.isNotBlank()) Text(meta, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                if (t.genres.isNotEmpty()) Text(t.genres.joinToString(" · "), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Button(
+                        onClick = { t.episodes.firstOrNull()?.let(onPlayEp) },
+                        shape = RoundedCornerShape(14.dp), modifier = Modifier.weight(1f).height(50.dp),
+                    ) { Icon(Icons.Rounded.PlayArrow, null); Spacer(Modifier.size(4.dp)); Text("Putar", fontWeight = FontWeight.Bold) }
+                    OutlinedButton(onClick = onFav, shape = RoundedCornerShape(14.dp), modifier = Modifier.height(50.dp)) {
+                        Icon(if (fav) Icons.Rounded.Check else Icons.Rounded.Add, null); Spacer(Modifier.size(4.dp)); Text("Koleksi")
+                    }
+                }
+                t.synopsis?.let { Text(it, color = MaterialTheme.colorScheme.onSurface, fontSize = 14.sp) }
+                Text("Episode", fontWeight = FontWeight.Bold, fontSize = 17.sp)
+            }
+        }
+        items(t.episodes) { ep -> EpisodeRow(ep, current = false) { onPlayEp(ep) } }
+        item { Spacer(Modifier.height(24.dp)) }
     }
 }
 
 @Composable
 private fun PlayerScreen(
-    player: Player, s: Stream, error: String?, fav: Boolean,
-    onBack: () -> Unit, onFav: () -> Unit, onOpen: (Stream) -> Unit,
+    player: Player, target: PlayTarget, error: String?, fav: Boolean,
+    onBack: () -> Unit, onFav: () -> Unit, onPlayEp: (Episode) -> Unit,
 ) {
+    val t = target.title
+    val idx = t.episodes.indexOfFirst { it.number == target.episode.number }
+    val prev = t.episodes.getOrNull(idx - 1)
+    val next = t.episodes.getOrNull(idx + 1)
     Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).statusBarsPadding().navigationBarsPadding()) {
         Row(Modifier.padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Kembali") }
-            Text(s.title, fontWeight = FontWeight.Bold, fontSize = 18.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(t.title, fontWeight = FontWeight.Bold, fontSize = 18.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         PlayerSurface(player, Modifier.fillMaxWidth().aspectRatio(16f / 9f).background(Color.Black))
-        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            Text(s.title, fontSize = 24.sp, fontWeight = FontWeight.Black)
-            Text("${s.type} · Streaming adaptif", color = MaterialTheme.colorScheme.onSurfaceVariant)
-            error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-            Button(onClick = onFav, shape = RoundedCornerShape(14.dp)) {
-                Icon(if (fav) Icons.Rounded.Check else Icons.Rounded.Add, null)
-                Spacer(Modifier.size(6.dp)); Text(if (fav) "Di koleksi" else "Koleksi", fontWeight = FontWeight.Bold)
+        LazyColumn(Modifier.padding(horizontal = 20.dp), contentPadding = PaddingValues(vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            item {
+                Text(t.title, fontSize = 22.sp, fontWeight = FontWeight.Black)
+                Text(
+                    "Episode ${target.episode.number}" + (target.episode.title?.let { " — $it" } ?: ""),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             }
-            Text("Stream lainnya", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-            PosterRow(streams.filter { it.url != s.url }, onOpen, 0.dp)
+            item {
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OutlinedButton(onClick = { prev?.let(onPlayEp) }, enabled = prev != null, shape = RoundedCornerShape(14.dp)) {
+                        Icon(Icons.Rounded.SkipPrevious, null); Spacer(Modifier.size(4.dp)); Text("Sebelumnya")
+                    }
+                    OutlinedButton(onClick = { next?.let(onPlayEp) }, enabled = next != null, shape = RoundedCornerShape(14.dp)) {
+                        Text("Berikutnya"); Spacer(Modifier.size(4.dp)); Icon(Icons.Rounded.SkipNext, null)
+                    }
+                    Button(onClick = onFav, shape = RoundedCornerShape(14.dp)) {
+                        Icon(if (fav) Icons.Rounded.Check else Icons.Rounded.Add, null)
+                        Spacer(Modifier.size(4.dp)); Text(if (fav) "Di koleksi" else "Koleksi", fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+            item { Text("Episode lainnya", fontWeight = FontWeight.Bold, fontSize = 16.sp) }
+            items(t.episodes) { ep -> EpisodeRow(ep, current = ep.number == target.episode.number) { onPlayEp(ep) } }
+        }
+    }
+}
+
+@Composable
+private fun EpisodeRow(ep: Episode, current: Boolean, onClick: () -> Unit) {
+    Surface(
+        onClick = onClick, shape = RoundedCornerShape(14.dp),
+        color = if (current) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 4.dp),
+    ) {
+        Row(Modifier.padding(horizontal = 14.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                Modifier.size(38.dp).clip(CircleShape)
+                    .background(if (current) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Rounded.PlayArrow, null,
+                    tint = if (current) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.size(20.dp),
+                )
+            }
+            Spacer(Modifier.size(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text("Episode ${ep.number}", fontWeight = FontWeight.SemiBold)
+                ep.title?.let { Text(it, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            }
+            if (current) Text("Diputar", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
         }
     }
 }
@@ -235,19 +446,29 @@ private fun Section(title: String, content: @Composable () -> Unit) {
 }
 
 @Composable
-private fun Hero(s: Stream, fav: Boolean, onOpen: (Stream) -> Unit, onFav: (Stream) -> Unit) {
-    Box(Modifier.padding(horizontal = 20.dp).fillMaxWidth().height(240.dp).clip(RoundedCornerShape(28.dp)).background(s.tone)) {
-        Icon(Icons.Rounded.PlayArrow, null, Modifier.align(Alignment.TopEnd).size(170.dp).alpha(0.14f), tint = Color.White)
+private fun Hero(t: Title, fav: Boolean, onPlay: (Episode) -> Unit, onFav: () -> Unit, onSelect: () -> Unit) {
+    Box(Modifier.padding(horizontal = 20.dp).fillMaxWidth().height(250.dp).clip(RoundedCornerShape(28.dp)).background(Color(0xFF1A1A1C))) {
+        if (t.banner != null) {
+            AsyncImage(t.banner, t.title, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+        }
+        Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.78f)))))
         Column(Modifier.align(Alignment.BottomStart).padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             TypeBadge("UNGGULAN")
-            Text(s.title, color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Black)
-            Text("${s.type} · Contoh stream", color = Color(0xFFE8E4D0), fontSize = 13.sp)
+            Text(t.title, color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.Black, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            val meta = listOfNotNull(
+                t.matchPercent?.let { "$it% cocok" }, t.year?.toString(), t.statusLabel, "${t.episodes.size} episode",
+            ).joinToString(" · ")
+            Text(meta, color = Color(0xFFE8E4D0), fontSize = 13.sp)
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Button(onClick = { onOpen(s) }, shape = RoundedCornerShape(14.dp)) {
+                Button(onClick = { t.episodes.firstOrNull()?.let(onPlay) }, shape = RoundedCornerShape(14.dp)) {
                     Icon(Icons.Rounded.PlayArrow, null); Spacer(Modifier.size(4.dp)); Text("Putar", fontWeight = FontWeight.Bold)
                 }
                 OutlinedButton(
-                    onClick = { onFav(s) }, shape = RoundedCornerShape(14.dp),
+                    onClick = onSelect, shape = RoundedCornerShape(14.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
+                ) { Icon(Icons.Rounded.Info, null); Spacer(Modifier.size(4.dp)); Text("Detail") }
+                OutlinedButton(
+                    onClick = onFav, shape = RoundedCornerShape(14.dp),
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
                 ) { Icon(if (fav) Icons.Rounded.Check else Icons.Rounded.Add, null); Spacer(Modifier.size(4.dp)); Text("Koleksi") }
             }
@@ -263,42 +484,54 @@ private fun TypeBadge(text: String) {
 }
 
 @Composable
-private fun WideCard(s: Stream, onOpen: (Stream) -> Unit) {
-    Box(Modifier.width(240.dp).height(135.dp).clip(RoundedCornerShape(20.dp)).background(s.tone).clickable { onOpen(s) }) {
-        Icon(Icons.Rounded.PlayArrow, null, Modifier.align(Alignment.Center).size(44.dp), tint = Color.White.copy(alpha = 0.9f))
-        Box(Modifier.padding(10.dp)) { TypeBadge(s.type) }
-        Text(s.title, Modifier.align(Alignment.BottomStart).padding(12.dp), color = Color.White, fontWeight = FontWeight.Bold)
+private fun WideCard(t: Title, onSelect: (Title) -> Unit) {
+    Box(Modifier.width(240.dp).height(135.dp).clip(RoundedCornerShape(20.dp)).background(Color(0xFF222225)).clickable { onSelect(t) }) {
+        if (t.banner != null) {
+            AsyncImage(t.banner, t.title, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+        }
+        Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.72f)))))
+        Icon(Icons.Rounded.PlayArrow, null, Modifier.align(Alignment.Center).size(40.dp), tint = Color.White.copy(alpha = 0.9f))
+        Text(t.title, Modifier.align(Alignment.BottomStart).padding(12.dp), color = Color.White, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
 @Composable
-private fun PosterRow(list: List<Stream>, onOpen: (Stream) -> Unit, hPad: androidx.compose.ui.unit.Dp = 20.dp) {
+private fun PosterRow(list: List<Title>, onSelect: (Title) -> Unit, hPad: androidx.compose.ui.unit.Dp = 20.dp) {
     LazyRow(contentPadding = PaddingValues(horizontal = hPad), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        items(list) { s ->
-            Column(Modifier.width(120.dp).clickable { onOpen(s) }, verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Box(Modifier.fillMaxWidth().aspectRatio(2f / 3f).clip(RoundedCornerShape(16.dp)).background(s.tone)) {
-                    Icon(Icons.Rounded.PlayArrow, null, Modifier.align(Alignment.Center).size(36.dp), tint = Color.White.copy(alpha = 0.9f))
-                    Box(Modifier.padding(8.dp)) { TypeBadge(s.type) }
+        items(list) { t ->
+            Column(Modifier.width(120.dp).clickable { onSelect(t) }, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Box(Modifier.fillMaxWidth().aspectRatio(2f / 3f).clip(RoundedCornerShape(16.dp)).background(Color(0xFF222225))) {
+                    if (t.poster != null) {
+                        AsyncImage(t.poster, t.title, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                    }
+                    t.matchPercent?.let {
+                        Box(Modifier.padding(8.dp)) { TypeBadge("$it%") }
+                    }
                 }
-                Text(s.title, maxLines = 2, overflow = TextOverflow.Ellipsis, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                Text(t.title, maxLines = 2, overflow = TextOverflow.Ellipsis, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
             }
         }
     }
 }
 
 @Composable
-private fun ListRow(s: Stream, onOpen: (Stream) -> Unit) {
-    Surface(onClick = { onOpen(s) }, shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.surfaceVariant, modifier = Modifier.fillMaxWidth()) {
+private fun ListRow(t: Title, onSelect: (Title) -> Unit) {
+    Surface(onClick = { onSelect(t) }, shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.surfaceVariant, modifier = Modifier.fillMaxWidth()) {
         Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(56.dp).clip(RoundedCornerShape(12.dp)).background(s.tone), contentAlignment = Alignment.Center) {
-                Icon(Icons.Rounded.PlayArrow, null, tint = Color.White)
+            Box(Modifier.size(56.dp).clip(RoundedCornerShape(12.dp)).background(Color(0xFF2A2A2E)), contentAlignment = Alignment.Center) {
+                if (t.poster != null) {
+                    AsyncImage(t.poster, t.title, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                } else {
+                    Icon(Icons.Rounded.PlayArrow, null, tint = Color.White)
+                }
             }
             Spacer(Modifier.size(12.dp))
             Column(Modifier.weight(1f)) {
-                Text(s.title, fontWeight = FontWeight.SemiBold)
-                Text(s.url, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(t.title, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                val meta = listOfNotNull(t.year?.toString(), "${t.episodes.size} episode", t.score?.let { s -> "★ $s" }).joinToString(" · ")
+                Text(meta, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            TypeBadge(s.type)
+            Icon(Icons.Rounded.PlayArrow, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }

@@ -14,10 +14,26 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "1.0"
+        // Kunci katalog (tersamar) dari rahasia CI; kosong pada build lokal.
+        val catalogKeyX = System.getenv("CATALOG_KEY") ?: ""
+        buildConfigField("String", "CATALOG_KEY_X", "\"$catalogKeyX\"")
+    }
+
+    signingConfigs {
+        create("stable") {
+            storeFile = rootProject.file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
     }
 
     buildTypes {
+        debug {
+            signingConfig = signingConfigs.getByName("stable")
+        }
         release {
+            signingConfig = signingConfigs.getByName("stable")
             isMinifyEnabled = false
         }
     }
@@ -30,6 +46,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 
@@ -43,6 +60,9 @@ dependencies {
     implementation(composeBom)
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.material3:material3")
+    implementation("androidx.compose.material:material-icons-extended")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+    implementation("io.coil-kt:coil-compose:2.7.0")
 
     // Media3: ExoPlayer + HLS + DASH
     val media3 = "1.5.1"
