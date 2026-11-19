@@ -4,7 +4,7 @@ Aplikasi Android native (Kotlin + Jetpack Compose + Media3) untuk streaming anim
 
 - Terhubung ke katalog asli (ribuan judul): Cloudflare Pages terenkripsi AES-256-GCM + cermin jsDelivr/raw
 - Poster, banner, sinopsis, genre, skor, dan daftar episode per judul
-- Subtitle native Inggris + Indonesia dari manifest HLS (dipilih lewat tombol teks di pemutar)
+- Subtitle native Inggris + Indonesia dari manifest HLS, dipilih otomatis mengikuti bahasa aplikasi (tanpa pilihan manual di pemutar)
 - Pemutar tangguh: pintu CDN dipilih otomatis (jsDelivr beberapa edge / raw) bila satu pintu gagal
 - Koleksi tersimpan permanen, posisi episode disimpan untuk dilanjutkan, dan episode berikutnya diputar otomatis
 - Layanan sesi media Android menyediakan kontrol pemutaran; video dijeda saat aplikasi ke latar belakang

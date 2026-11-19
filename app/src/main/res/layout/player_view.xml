@@ -4,6 +4,7 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     app:use_controller="true"
+    app:show_subtitle_button="false"
     app:resize_mode="fit"
     app:show_buffering="when_playing"
     app:show_timeout="3000"
