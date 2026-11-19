@@ -47,6 +47,8 @@ import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
@@ -59,93 +61,59 @@ import com.renkai.app.data.Episode
 import com.renkai.app.data.Title
 import kotlinx.coroutines.launch
 
-private data class PlayTarget(val title: Title, val episode: Episode)
-
 @Composable
-fun RenkaiApp(autoTitle: String? = null, autoEp: Int = 1) {
+fun RenkaiApp(
+    autoTitle: String? = null,
+    autoEp: Int = 1,
+    vm: RenkaiViewModel = viewModel(),
+) {
     val context = LocalContext.current
     val view = LocalView.current
-    val scope = rememberCoroutineScope()
-    val playbackRequests = remember { PlaybackRequestGate() }
-    val player = remember { ExoPlayer.Builder(context).build().apply { playWhenReady = true } }
-    var error by remember { mutableStateOf<String?>(null) }
-    var playing by remember { mutableStateOf<PlayTarget?>(null) }
-    var selected by remember { mutableStateOf<Title?>(null) }
+    val state by vm.state.collectAsStateWithLifecycle()
+    val player by vm.player.collectAsStateWithLifecycle()
+    var selectedId by rememberSaveable { mutableStateOf<String?>(null) }
     var tab by rememberSaveable { mutableIntStateOf(0) }
-    val favs = remember { mutableStateListOf<Title>() }
+    var askedNotif by rememberSaveable { mutableStateOf(false) }
 
-    var catalog by remember { mutableStateOf<List<Title>?>(null) }
-    var loadError by remember { mutableStateOf<String?>(null) }
-    var retryKey by remember { mutableIntStateOf(0) }
-    LaunchedEffect(retryKey) {
-        try {
-            catalog = CatalogApi.fetchCatalog(force = retryKey > 0)
-            loadError = null
-        } catch (e: Exception) {
-            loadError = CatalogApi.lastError ?: (e.message ?: "Gagal memuat katalog")
+    val cat = state.catalog
+    val cur = state.playing
+    val p = player
+    val favoriteIds = state.favoriteIds
+    val favs = remember(cat, favoriteIds) {
+        val byId = cat.orEmpty().associateBy { it.id }
+        favoriteIds.mapNotNull { byId[it] }
+    }
+    val sel = cat?.firstOrNull { it.id == selectedId }
+
+    // Izin notifikasi (Android 13+) diminta sekali, saat pertama kali memutar.
+    val notifLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
+    ) { }
+    LaunchedEffect(cur != null) {
+        if (cur != null && !askedNotif && android.os.Build.VERSION.SDK_INT >= 33) {
+            askedNotif = true
+            val granted = androidx.core.content.ContextCompat.checkSelfPermission(
+                context, android.Manifest.permission.POST_NOTIFICATIONS,
+            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+            if (!granted) notifLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
         }
     }
 
-    DisposableEffect(player) {
-        val l = object : Player.Listener {
-            override fun onPlayerError(e: PlaybackException) { error = "Gagal memutar: ${e.errorCodeName}" }
-            override fun onPlaybackStateChanged(state: Int) { if (state == Player.STATE_READY) error = null }
-        }
-        player.addListener(l)
-        onDispose { player.removeListener(l); player.release() }
-    }
+    // Ekstra intent untuk uji otomatis: langsung putar judul/episode setelah katalog siap.
+    LaunchedEffect(cat) { vm.autoPlayOnce(autoTitle, autoEp) }
+
     val owner = LocalLifecycleOwner.current
     DisposableEffect(owner) {
-        val o = LifecycleEventObserver { _, e -> if (e == Lifecycle.Event.ON_STOP) player.pause() }
+        val o = LifecycleEventObserver { _, e -> if (e == Lifecycle.Event.ON_STOP) vm.onAppBackgrounded() }
         owner.lifecycle.addObserver(o)
         onDispose { owner.lifecycle.removeObserver(o) }
     }
 
-    fun play(t: Title, ep: Episode) {
-        error = null
-        playing = PlayTarget(t, ep)
-        val requestId = playbackRequests.issue()
-        scope.launch {
-            val url = CatalogApi.pickDoor(ep.playlist)
-            if (!playbackRequests.isCurrent(requestId)) return@launch
-            val mime = when {
-                url.contains(".m3u8", true) -> MimeTypes.APPLICATION_M3U8
-                url.contains(".mpd", true) -> MimeTypes.APPLICATION_MPD
-                else -> null
-            }
-            player.setMediaItem(MediaItem.Builder().setUri(url).apply { mime?.let { setMimeType(it) } }.build())
-            player.prepare(); player.play()
-        }
-    }
-    var autoDone by remember { mutableStateOf(false) }
-    LaunchedEffect(catalog) {
-        val list = catalog
-        if (list != null && autoTitle != null && !autoDone) {
-            autoDone = true
-            val t = list.firstOrNull { it.id == autoTitle || it.title.contains(autoTitle, ignoreCase = true) }
-            val ep = t?.episodes?.firstOrNull { it.number == autoEp } ?: t?.episodes?.firstOrNull()
-            if (t != null && ep != null) play(t, ep)
-        }
-    }
-
-    fun playLink(url: String) {
-        val t = Title(
-            id = "tautan-kustom", title = "Tautan kustom",
-            episodes = listOf(Episode(1, url)),
-        )
-        play(t, t.episodes[0])
-    }
-    fun toggleFav(t: Title) {
-        val i = favs.indexOfFirst { it.id == t.id }
-        if (i >= 0) favs.removeAt(i) else favs.add(t)
-    }
-    fun closePlayer() { playbackRequests.invalidate(); player.pause(); playing = null }
-
-    BackHandler(enabled = playing != null) { closePlayer() }
-    BackHandler(enabled = playing == null && selected != null) { selected = null }
+    BackHandler(enabled = cur != null) { vm.closePlayer() }
+    BackHandler(enabled = cur == null && sel != null) { selectedId = null }
 
     val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
-    val fullscreen = landscape && playing != null
+    val fullscreen = landscape && cur != null
     LaunchedEffect(fullscreen) {
         val w = (context as? Activity)?.window ?: return@LaunchedEffect
         val c = WindowCompat.getInsetsController(w, view)
@@ -155,27 +123,30 @@ fun RenkaiApp(autoTitle: String? = null, autoEp: Int = 1) {
         } else c.show(WindowInsetsCompat.Type.systemBars())
     }
 
-    val cur = playing
-    val sel = selected
-    val cat = catalog
     when {
-        fullscreen -> Box(Modifier.fillMaxSize().background(Color.Black)) { PlayerSurface(player, Modifier.fillMaxSize()) }
-        cur != null -> PlayerScreen(
-            player, cur, error,
-            favs.any { it.id == cur.title.id },
-            onBack = { closePlayer() },
-            onFav = { toggleFav(cur.title) },
-            onPlayEp = { ep -> play(cur.title, ep) },
+        cur != null && p == null && state.playbackError != null ->
+            ErrorScreen(state.playbackError ?: "Layanan pemutar tidak tersedia") {
+                vm.play(cur.title, cur.episode)
+            }
+        cur != null && p == null -> LoadingScreen()
+        cur != null && p != null && fullscreen ->
+            Box(Modifier.fillMaxSize().background(Color.Black)) { PlayerSurface(p, Modifier.fillMaxSize()) }
+        cur != null && p != null -> PlayerScreen(
+            p, cur, state.playbackError,
+            favoriteIds.contains(cur.title.id),
+            onBack = { vm.closePlayer() },
+            onFav = { vm.toggleFav(cur.title) },
+            onPlayEp = { ep -> vm.play(cur.title, ep) },
         )
         sel != null -> DetailScreen(
             sel,
-            favs.any { it.id == sel.id },
-            onBack = { selected = null },
-            onFav = { toggleFav(sel) },
-            onPlayEp = { ep -> play(sel, ep) },
+            favoriteIds.contains(sel.id),
+            onBack = { selectedId = null },
+            onFav = { vm.toggleFav(sel) },
+            onPlayEp = { ep -> vm.play(sel, ep) },
         )
-        cat == null && loadError == null -> LoadingScreen()
-        cat == null -> ErrorScreen(loadError ?: "Gagal memuat katalog") { retryKey++ }
+        cat == null && state.loadError == null -> LoadingScreen()
+        cat == null -> ErrorScreen(state.loadError ?: "Gagal memuat katalog") { vm.loadCatalog(force = true) }
         else -> Scaffold(
             containerColor = MaterialTheme.colorScheme.background,
             bottomBar = {
@@ -197,9 +168,9 @@ fun RenkaiApp(autoTitle: String? = null, autoEp: Int = 1) {
         ) { pad ->
             Box(Modifier.padding(pad).statusBarsPadding()) {
                 when (tab) {
-                    0 -> HomeTab(cat, favs, onSelect = { selected = it }, onPlay = { t, ep -> play(t, ep) }, onFav = ::toggleFav)
-                    1 -> SearchTab(cat, onSelect = { selected = it }, onPlayLink = ::playLink)
-                    else -> CollectionTab(favs, onSelect = { selected = it })
+                    0 -> HomeTab(cat, favs, onSelect = { selectedId = it.id }, onPlay = { t, ep -> vm.play(t, ep) }, onFav = vm::toggleFav)
+                    1 -> SearchTab(cat, onSelect = { selectedId = it.id }, onPlayLink = vm::playLink)
+                    else -> CollectionTab(favs, onSelect = { selectedId = it.id })
                 }
             }
         }
@@ -313,7 +284,7 @@ private fun CollectionTab(favs: List<Title>, onSelect: (Title) -> Unit) {
         item { Logo() }
         item { Text("Koleksi", fontSize = 20.sp, fontWeight = FontWeight.Bold) }
         if (favs.isEmpty()) {
-            item { Text("Belum ada koleksi. Buka judul lalu tekan “Koleksi” untuk menyimpannya di sini (tersimpan selama aplikasi terbuka).", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            item { Text("Belum ada koleksi. Buka judul lalu tekan “Koleksi” untuk menyimpannya di sini.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
         } else {
             items(favs) { t -> ListRow(t, onSelect) }
         }

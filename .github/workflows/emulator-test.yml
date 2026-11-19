@@ -48,6 +48,13 @@ jobs:
           FP=$("$APKSIGNER" verify --print-certs app/build/outputs/apk/debug/app-debug.apk | grep "SHA-256 digest" | sed 's/.*digest: //' | tr -d ' ' | tr 'A-F' 'a-f')
           echo "Sidik jari APK: $FP" | tee fp.txt
           test "$FP" = "dbc6eb7866f6e2643a540d5acf30d863a76a8edc0bceee128e48f45aa12d002a"
+      - name: Upload APK uji (debug)
+        if: always() && hashFiles('app/build/outputs/apk/debug/app-debug.apk') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: renkai-debug-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
       - uses: actions/upload-artifact@v4
         if: always()
         with:
