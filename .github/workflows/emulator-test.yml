@@ -19,11 +19,6 @@ jobs:
         run: gradle assembleDebug --stacktrace
         env:
           CATALOG_KEY: ${{ secrets.CATALOG_KEY }}
-      - name: Verifikasi sidik jari sertifikat APK
-        run: |
-          FP=$(keytool -printcert -jarfile app/build/outputs/apk/debug/app-debug.apk | grep -i "SHA256:" | head -1 | sed 's/.*SHA256: //')
-          echo "Sidik jari APK: $FP"
-          test "$FP" = "DB:C6:EB:78:66:F6:E2:64:3A:54:0D:5A:CF:30:D8:63:A7:6A:8E:DC:0B:CE:EE:12:8E:48:F4:5A:A1:2D:00:2A"
       - name: Uji putar di emulator
         uses: reactivecircus/android-emulator-runner@v2
         with:
@@ -44,6 +39,13 @@ jobs:
             sleep 12
             adb exec-out screencap -p > play2.png
             adb shell 'dumpsys activity activities | grep -A2 mResumedActivity' || true
+      - name: Verifikasi sidik jari sertifikat APK (apksigner; keytool tak membaca tanda tangan APK v2)
+        if: always()
+        run: |
+          APKSIGNER=$(ls $ANDROID_HOME/build-tools/*/apksigner | sort -V | tail -1)
+          FP=$("$APKSIGNER" verify --print-certs app/build/outputs/apk/debug/app-debug.apk | grep "SHA-256 digest" | sed 's/.*digest: //' | tr -d ' ' | tr 'A-F' 'a-f')
+          echo "Sidik jari APK: $FP" | tee fp.txt
+          test "$FP" = "dbc6eb7866f6e2643a540d5acf30d863a76a8edc0bceee128e48f45aa12d002a"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -52,12 +54,13 @@ jobs:
             home.png
             play1.png
             play2.png
+            fp.txt
       - name: Unggah tangkapan layar ke Release ci-shots
         if: always()
         run: |
-          gh release create ci-shots home.png play1.png play2.png \
+          gh release create ci-shots home.png play1.png play2.png fp.txt \
             --prerelease --title "Tangkapan layar uji emulator" \
             --notes "Bukti uji mandiri di emulator CI." \
-          || gh release upload ci-shots home.png play1.png play2.png --clobber
+          || gh release upload ci-shots home.png play1.png play2.png fp.txt --clobber
         env:
           GH_TOKEN: ${{ github.token }}
