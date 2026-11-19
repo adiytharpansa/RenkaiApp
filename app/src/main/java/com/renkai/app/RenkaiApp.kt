@@ -16,9 +16,12 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.DateRange
+import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.Info
+import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Search
@@ -32,6 +35,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
@@ -69,6 +73,7 @@ fun RenkaiApp(
     val player by vm.player.collectAsStateWithLifecycle()
     var selectedId by rememberSaveable { mutableStateOf<String?>(null) }
     var tab by rememberSaveable { mutableIntStateOf(0) }
+    var searchOpen by rememberSaveable { mutableStateOf(false) }
 
     val cat = state.catalog
     val cur = state.playing
@@ -97,6 +102,7 @@ fun RenkaiApp(
 
     BackHandler(enabled = cur != null) { vm.closePlayer() }
     BackHandler(enabled = cur == null && sel != null) { selectedId = null }
+    BackHandler(enabled = cur == null && sel == null && searchOpen) { searchOpen = false }
 
     val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
     val fullscreen = landscape && cur != null
@@ -137,26 +143,57 @@ fun RenkaiApp(
             containerColor = MaterialTheme.colorScheme.background,
             bottomBar = {
                 NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
-                    listOf("Beranda" to Icons.Rounded.Home, "Cari" to Icons.Rounded.Search, "Koleksi" to Icons.Rounded.Favorite)
-                        .forEachIndexed { i, (label, icon) ->
-                            NavigationBarItem(
-                                selected = tab == i, onClick = { tab = i },
-                                icon = { Icon(icon, label) }, label = { Text(label) },
-                                colors = NavigationBarItemDefaults.colors(
-                                    indicatorColor = MaterialTheme.colorScheme.primary,
-                                    selectedIconColor = MaterialTheme.colorScheme.onPrimary,
-                                    selectedTextColor = MaterialTheme.colorScheme.onBackground,
-                                ),
-                            )
-                        }
+                    listOf(
+                        Triple(0, "Beranda", Icons.Rounded.Home),
+                        Triple(1, "Jadwal", Icons.Rounded.DateRange),
+                        Triple(2, "Koleksi", Icons.Rounded.Favorite),
+                        Triple(3, "Unduhan", Icons.Rounded.Download),
+                        Triple(4, "Akun", Icons.Rounded.Person),
+                    ).forEach { (i, label, icon) ->
+                        NavigationBarItem(
+                            selected = !searchOpen && tab == i,
+                            onClick = { tab = i; searchOpen = false },
+                            icon = { Icon(icon, contentDescription = label) },
+                            colors = NavigationBarItemDefaults.colors(
+                                indicatorColor = MaterialTheme.colorScheme.primary,
+                                selectedIconColor = MaterialTheme.colorScheme.onPrimary,
+                            ),
+                        )
+                    }
                 }
             },
         ) { pad ->
             Box(Modifier.padding(pad).statusBarsPadding()) {
-                when (tab) {
-                    0 -> HomeTab(cat, favs, onSelect = { selectedId = it.id }, onPlay = { t, ep -> vm.play(t, ep) }, onFav = vm::toggleFav)
-                    1 -> SearchTab(cat, onSelect = { selectedId = it.id }, onPlayLink = vm::playLink)
-                    else -> CollectionTab(favs, onSelect = { selectedId = it.id })
+                if (searchOpen) {
+                    SearchTab(
+                        cat,
+                        onBack = { searchOpen = false },
+                        onSelect = { selectedId = it.id },
+                        onPlayLink = vm::playLink,
+                    )
+                } else {
+                    when (tab) {
+                        0 -> HomeTab(
+                            cat,
+                            favs,
+                            onSelect = { selectedId = it.id },
+                            onPlay = { t, ep -> vm.play(t, ep) },
+                            onFav = vm::toggleFav,
+                            onSearch = { searchOpen = true },
+                        )
+                        1 -> UnavailableTab("Jadwal", Icons.Rounded.DateRange)
+                        2 -> CollectionTab(favs, onSelect = { selectedId = it.id })
+                        3 -> UnavailableTab("Unduhan", Icons.Rounded.Download)
+                        4 -> UnavailableTab("Akun", Icons.Rounded.Person)
+                        else -> HomeTab(
+                            cat,
+                            favs,
+                            onSelect = { selectedId = it.id },
+                            onPlay = { t, ep -> vm.play(t, ep) },
+                            onFav = vm::toggleFav,
+                            onSearch = { searchOpen = true },
+                        )
+                    }
                 }
             }
         }
@@ -195,6 +232,7 @@ private fun HomeTab(
     onSelect: (Title) -> Unit,
     onPlay: (Title, Episode) -> Unit,
     onFav: (Title) -> Unit,
+    onSearch: () -> Unit,
 ) {
     val hero = remember(catalog) { catalog.filter { it.banner != null }.maxByOrNull { it.score ?: 0.0 } }
     val trending = remember(catalog) { catalog.sortedByDescending { it.score ?: 0.0 }.take(20) }
@@ -205,7 +243,16 @@ private fun HomeTab(
             .sortedByDescending { it.value }.take(4).map { it.key }
     }
     LazyColumn(contentPadding = PaddingValues(bottom = 16.dp), verticalArrangement = Arrangement.spacedBy(22.dp)) {
-        item { Logo(Modifier.padding(start = 20.dp, top = 16.dp)) }
+        item {
+            Row(
+                Modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp, top = 16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Logo()
+                Spacer(Modifier.weight(1f))
+                IconButton(onClick = onSearch) { Icon(Icons.Rounded.Search, contentDescription = "Cari") }
+            }
+        }
         if (hero != null) {
             item { Hero(hero, favs.any { it.id == hero.id }, onPlay = { ep -> onPlay(hero, ep) }, onFav = { onFav(hero) }, onSelect = { onSelect(hero) }) }
         }
@@ -231,7 +278,12 @@ private fun HomeTab(
 }
 
 @Composable
-private fun SearchTab(catalog: List<Title>, onSelect: (Title) -> Unit, onPlayLink: (String) -> Unit) {
+private fun SearchTab(
+    catalog: List<Title>,
+    onBack: () -> Unit,
+    onSelect: (Title) -> Unit,
+    onPlayLink: (String) -> Unit,
+) {
     var q by rememberSaveable { mutableStateOf("") }
     val isLink = q.trim().startsWith("http", true)
     val results = remember(q, catalog) {
@@ -239,7 +291,12 @@ private fun SearchTab(catalog: List<Title>, onSelect: (Title) -> Unit, onPlayLin
         else catalog.filter { it.title.contains(q, true) || it.genres.any { g -> g.contains(q, true) } }.take(60)
     }
     LazyColumn(Modifier.padding(horizontal = 20.dp), contentPadding = PaddingValues(vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        item { Logo() }
+        item {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Kembali ke beranda") }
+                Text("Cari", fontSize = 20.sp, fontWeight = FontWeight.Bold)
+            }
+        }
         item {
             OutlinedTextField(
                 value = q, onValueChange = { q = it }, singleLine = true, modifier = Modifier.fillMaxWidth(),
@@ -273,6 +330,17 @@ private fun CollectionTab(favs: List<Title>, onSelect: (Title) -> Unit) {
             item { Text("Belum ada koleksi. Buka judul lalu tekan “Koleksi” untuk menyimpannya di sini.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
         } else {
             items(favs) { t -> ListRow(t, onSelect) }
+        }
+    }
+}
+
+@Composable
+private fun UnavailableTab(title: String, icon: ImageVector) {
+    Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Icon(icon, contentDescription = null, modifier = Modifier.size(40.dp), tint = MaterialTheme.colorScheme.primary)
+            Text(title, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+            Text("Fitur $title belum tersedia.", color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
