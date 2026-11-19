@@ -194,25 +194,8 @@ object CatalogApi {
         throw IOException(lastError ?: "semua sumber katalog gagal")
     }
 
-    /**
-     * Pintu-pintu CDN untuk satu URL playlist gudang: berkas yang sama bisa
-     * diambil lewat banyak pintu jsDelivr/raw. Pin segar kadang 403 di satu
-     * edge tapi sudah terbaca di pintu lain.
-     */
-    fun doorVariants(url: String): List<String> {
-        val m = Regex("""^https://[A-Za-z0-9.-]+/gh/([^/]+)/([^/@]+)@([^/]+)/(.+)$""").find(url)
-            ?: return listOf(url)
-        val (owner, repo, pin, path) = m.destructured
-        val gh = "$owner/$repo@$pin/$path"
-        val raw = "$owner/$repo/$pin/$path"
-        return listOf(
-            "https://cdn.jsdelivr.net/gh/$gh",
-            "https://fastly.jsdelivr.net/gh/$gh",
-            "https://gcore.jsdelivr.net/gh/$gh",
-            "https://raw.githubusercontent.com/$raw",
-            "https://cdn.statically.io/gh/$gh",
-        )
-    }
+    /** Mirror untuk aset GitHub yang sama, termasuk ketika URL asal memakai raw GitHub. */
+    fun doorVariants(url: String): List<String> = CdnDoorVariants.forUrl(url)
 
     /** Pilih pintu pertama yang menjawab playlist valid (#EXTM3U). */
     suspend fun pickDoor(url: String): String = withContext(Dispatchers.IO) {

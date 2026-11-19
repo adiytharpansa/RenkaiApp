@@ -204,9 +204,14 @@ class RenkaiViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch { store.toggleFavorite(t.id) }
     }
 
+    fun onAppForegrounded() {
+        PlaybackBackgroundPolicy.markAppForeground()
+    }
+
     fun onAppBackgrounded() {
+        PlaybackBackgroundPolicy.markAppBackground()
         saveProgress()
-        if (PAUSE_WHEN_BACKGROUND) _player.value?.pause()
+        _player.value?.pause()
     }
 
     private fun onEpisodeEnded() {
@@ -235,8 +240,6 @@ class RenkaiViewModel(app: Application) : AndroidViewModel(app) {
 
     companion object {
         private const val CONTROLLER_TIMEOUT_MS = 15_000L
-        /** true = video dijeda saat aplikasi ke latar belakang (tanpa audio latar belakang). */
-        private const val PAUSE_WHEN_BACKGROUND = true
 
         private fun positionKey(titleId: String, ep: Int) = "$titleId|$ep"
     }

@@ -104,8 +104,15 @@ fun RenkaiApp(
 
     val owner = LocalLifecycleOwner.current
     DisposableEffect(owner) {
-        val o = LifecycleEventObserver { _, e -> if (e == Lifecycle.Event.ON_STOP) vm.onAppBackgrounded() }
+        val o = LifecycleEventObserver { _, e ->
+            when (e) {
+                Lifecycle.Event.ON_START -> vm.onAppForegrounded()
+                Lifecycle.Event.ON_STOP -> vm.onAppBackgrounded()
+                else -> Unit
+            }
+        }
         owner.lifecycle.addObserver(o)
+        if (owner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) vm.onAppForegrounded()
         onDispose { owner.lifecycle.removeObserver(o) }
     }
 
