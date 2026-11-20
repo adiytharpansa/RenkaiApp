@@ -35,6 +35,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -55,11 +56,18 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
 import com.renkai.app.data.CatalogApi
+import com.renkai.app.data.Comment
+import com.renkai.app.data.CommentStore
 import com.renkai.app.data.Episode
 import com.renkai.app.data.Title
+import com.renkai.app.ui.CommentComposer
+import com.renkai.app.ui.CommentRow
 import kotlinx.coroutines.launch
 
 private data class PlayTarget(val title: Title, val episode: Episode)
+
+/** ID judul sintetis untuk "Putar link"; komentar dimatikan untuk judul ini. */
+private const val CUSTOM_LINK_ID = "tautan-kustom"
 
 @Composable
 fun RenkaiApp(autoTitle: String? = null, autoEp: Int = 1) {
@@ -130,7 +138,7 @@ fun RenkaiApp(autoTitle: String? = null, autoEp: Int = 1) {
 
     fun playLink(url: String) {
         val t = Title(
-            id = "tautan-kustom", title = "Tautan kustom",
+            id = CUSTOM_LINK_ID, title = "Tautan kustom",
             episodes = listOf(Episode(1, url)),
         )
         play(t, t.episodes[0])
@@ -375,50 +383,141 @@ private fun PlayerScreen(
     onBack: () -> Unit, onFav: () -> Unit, onPlayEp: (Episode) -> Unit,
 ) {
     val t = target.title
-    val idx = t.episodes.indexOfFirst { it.number == target.episode.number }
+    val epNo = target.episode.number
+    val idx = t.episodes.indexOfFirst { it.number == epNo }
     val prev = t.episodes.getOrNull(idx - 1)
     val next = t.episodes.getOrNull(idx + 1)
-    Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).statusBarsPadding().navigationBarsPadding()) {
+
+    val context = LocalContext.current
+    val focus = LocalFocusManager.current
+    val store = remember { CommentStore(context) }
+    val canComment = t.id != CUSTOM_LINK_ID
+    val comments = remember(t.id, epNo) {
+        mutableStateListOf<Comment>().apply { addAll(store.load(t.id, epNo)) }
+    }
+    var draft by rememberSaveable(t.id, epNo) { mutableStateOf("") }
+    var tab by rememberSaveable { mutableIntStateOf(0) }
+    val showComments = canComment && tab == 1
+
+    fun send() {
+        val text = draft.trim()
+        if (text.isEmpty()) return
+        comments.add(0, store.add(t.id, epNo, text))
+        draft = ""
+        focus.clearFocus()
+    }
+
+    Column(
+        Modifier.fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+            .statusBarsPadding().navigationBarsPadding().imePadding(),
+    ) {
         Row(Modifier.padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Kembali") }
             Text(t.title, fontWeight = FontWeight.Bold, fontSize = 18.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         PlayerSurface(player, Modifier.fillMaxWidth().aspectRatio(16f / 9f).background(Color.Black))
-        LazyColumn(Modifier.padding(horizontal = 20.dp), contentPadding = PaddingValues(vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        LazyColumn(
+            Modifier.weight(1f).padding(horizontal = 20.dp),
+            contentPadding = PaddingValues(vertical = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
             item {
-                Text(t.title, fontSize = 22.sp, fontWeight = FontWeight.Black)
-                Text(
-                    "Episode ${target.episode.number}" + (target.episode.title?.let { " — $it" } ?: ""),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-            }
-            item {
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    OutlinedButton(onClick = { prev?.let(onPlayEp) }, enabled = prev != null, shape = RoundedCornerShape(14.dp)) {
-                        Icon(Icons.Rounded.SkipPrevious, null); Spacer(Modifier.size(4.dp)); Text("Sebelumnya")
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(
+                            "Episode $epNo" + (target.episode.title?.let { " — $it" } ?: ""),
+                            fontSize = 20.sp, fontWeight = FontWeight.Black, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                        )
+                        val meta = listOfNotNull(t.year?.toString(), t.statusLabel, "${t.episodes.size} episode").joinToString(" · ")
+                        Text(meta, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                    OutlinedButton(onClick = { next?.let(onPlayEp) }, enabled = next != null, shape = RoundedCornerShape(14.dp)) {
-                        Text("Berikutnya"); Spacer(Modifier.size(4.dp)); Icon(Icons.Rounded.SkipNext, null)
-                    }
-                    Button(onClick = onFav, shape = RoundedCornerShape(14.dp)) {
-                        Icon(if (fav) Icons.Rounded.Check else Icons.Rounded.Add, null)
-                        Spacer(Modifier.size(4.dp)); Text(if (fav) "Di koleksi" else "Koleksi", fontWeight = FontWeight.Bold)
+                    Button(
+                        onClick = onFav, shape = RoundedCornerShape(14.dp),
+                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp),
+                    ) {
+                        Icon(if (fav) Icons.Rounded.Check else Icons.Rounded.Add, null, Modifier.size(18.dp))
+                        Spacer(Modifier.size(4.dp))
+                        Text(if (fav) "Di koleksi" else "Koleksi", fontWeight = FontWeight.Bold, maxLines = 1)
                     }
                 }
             }
-            item { Text("Episode lainnya", fontWeight = FontWeight.Bold, fontSize = 16.sp) }
-            items(t.episodes) { ep -> EpisodeRow(ep, current = ep.number == target.episode.number) { onPlayEp(ep) } }
+            if (error != null) {
+                item { Text(error, color = MaterialTheme.colorScheme.error) }
+            }
+            item {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OutlinedButton(
+                        onClick = { prev?.let(onPlayEp) }, enabled = prev != null,
+                        shape = RoundedCornerShape(14.dp), contentPadding = PaddingValues(horizontal = 12.dp),
+                        modifier = Modifier.weight(1f).height(48.dp),
+                    ) {
+                        Icon(Icons.Rounded.SkipPrevious, null); Spacer(Modifier.size(4.dp)); Text("Sebelumnya", maxLines = 1)
+                    }
+                    OutlinedButton(
+                        onClick = { next?.let(onPlayEp) }, enabled = next != null,
+                        shape = RoundedCornerShape(14.dp), contentPadding = PaddingValues(horizontal = 12.dp),
+                        modifier = Modifier.weight(1f).height(48.dp),
+                    ) {
+                        Text("Berikutnya", maxLines = 1); Spacer(Modifier.size(4.dp)); Icon(Icons.Rounded.SkipNext, null)
+                    }
+                }
+            }
+            if (canComment) {
+                item {
+                    TabRow(
+                        selectedTabIndex = tab,
+                        containerColor = Color.Transparent,
+                        contentColor = MaterialTheme.colorScheme.primary,
+                    ) {
+                        Tab(
+                            selected = tab == 0, onClick = { tab = 0 },
+                            unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                            text = { Text("Episode (${t.episodes.size})", fontWeight = FontWeight.Bold) },
+                        )
+                        Tab(
+                            selected = tab == 1, onClick = { tab = 1 },
+                            unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                            text = { Text("Komentar (${comments.size})", fontWeight = FontWeight.Bold) },
+                        )
+                    }
+                }
+            } else {
+                item { Text("Episode", fontWeight = FontWeight.Bold, fontSize = 16.sp) }
+            }
+            if (!showComments) {
+                items(t.episodes) { ep ->
+                    EpisodeRow(ep, current = ep.number == epNo, modifier = Modifier) { onPlayEp(ep) }
+                }
+            } else if (comments.isEmpty()) {
+                item {
+                    Text(
+                        "Belum ada komentar di Episode $epNo. Jadilah yang pertama!\nKomentar tersimpan di perangkat ini.",
+                        fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            } else {
+                items(comments, key = { it.id }) { c ->
+                    CommentRow(c, onDelete = { store.remove(t.id, epNo, c.id); comments.remove(c) })
+                }
+            }
+        }
+        if (showComments) {
+            CommentComposer(draft = draft, onDraftChange = { draft = it }, onSend = ::send)
         }
     }
 }
 
 @Composable
-private fun EpisodeRow(ep: Episode, current: Boolean, onClick: () -> Unit) {
+private fun EpisodeRow(
+    ep: Episode, current: Boolean,
+    modifier: Modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
+    onClick: () -> Unit,
+) {
     Surface(
         onClick = onClick, shape = RoundedCornerShape(14.dp),
         color = if (current) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 4.dp),
+        modifier = modifier.fillMaxWidth(),
     ) {
         Row(Modifier.padding(horizontal = 14.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(
