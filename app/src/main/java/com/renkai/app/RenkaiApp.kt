@@ -1,6 +1,7 @@
 package com.renkai.app
 
 import android.app.Activity
+import android.content.Intent
 import android.content.res.Configuration
 import android.view.LayoutInflater
 import android.view.View
@@ -11,6 +12,8 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -19,11 +22,13 @@ import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Favorite
+import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.SkipNext
 import androidx.compose.material.icons.rounded.SkipPrevious
 import androidx.compose.material3.*
@@ -65,6 +70,7 @@ import com.renkai.app.data.Episode
 import com.renkai.app.data.Title
 import com.renkai.app.ui.CommentComposer
 import com.renkai.app.ui.CommentRow
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.Locale
 
@@ -281,30 +287,52 @@ private fun HomeTab(
     onFav: (Title) -> Unit,
     onSearch: () -> Unit,
 ) {
-    val hero = remember(catalog) { catalog.filter { it.banner != null }.maxByOrNull { it.score ?: 0.0 } }
-    val trending = remember(catalog) { catalog.sortedByDescending { it.score ?: 0.0 }.take(20) }
-    val newest = remember(catalog) { catalog.asReversed().take(30) }
-    val movies = remember(catalog) { catalog.filter { it.episodes.size == 1 }.take(24) }
-    val topGenres = remember(catalog) {
-        catalog.flatMap { it.genres }.groupingBy { it }.eachCount().entries
-            .sortedByDescending { it.value }.take(4).map { it.key }
+    val heroPicks = remember(catalog) {
+        catalog.filter { it.banner != null }.sortedByDescending { it.score ?: 0.0 }.take(8)
     }
-    LazyColumn(contentPadding = mainContentPadding(), verticalArrangement = Arrangement.spacedBy(22.dp)) {
-        item { AppHeader(onSearch, Modifier.padding(start = 20.dp, end = 8.dp, top = 8.dp)) }
-        if (hero != null) {
-            item { Hero(hero, favs.any { it.id == hero.id }, onPlay = { ep -> onPlay(hero, ep) }, onFav = { onFav(hero) }, onSelect = { onSelect(hero) }) }
-        }
-        item { Section("Sedang Tren") { LazyRow(contentPadding = PaddingValues(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) { items(trending) { WideCard(it, onSelect) } } } }
-        item { Section("Baru Ditambahkan") { PosterRow(newest, onSelect) } }
-        for (g in topGenres) {
-            val row = catalog.filter { g in it.genres }.take(24)
-            if (row.size >= 4) {
-                item { Section(g) { PosterRow(row, onSelect) } }
-            }
-        }
-        if (movies.isNotEmpty()) {
-            item { Section("Film & Spesial") { PosterRow(movies, onSelect) } }
-        }
+    val spotlight = remember(catalog) { catalog.sortedByDescending { it.score ?: 0.0 }.take(15) }
+    val trending = remember(catalog) {
+        catalog.sortedWith(compareByDescending<Title> { it.year ?: 0 }.thenByDescending { it.score ?: 0.0 }).take(15)
+    }
+    val mostPopular = remember(catalog) {
+        catalog.sortedWith(compareByDescending<Title> { it.episodes.size }.thenByDescending { it.score ?: 0.0 }).take(15)
+    }
+    val mostWatched = remember(catalog) {
+        catalog.filter { it.status == "FINISHED" }.sortedByDescending { it.score ?: 0.0 }.take(15)
+    }
+    val topAiring = remember(catalog) {
+        val airing = catalog.filter { it.status == "RELEASING" }.sortedByDescending { it.score ?: 0.0 }
+        val fill = catalog.filter { it.status != "RELEASING" }
+            .sortedWith(compareByDescending<Title> { it.year ?: 0 }.thenByDescending { it.score ?: 0.0 })
+        (airing + fill).take(15)
+    }
+    val cal = java.util.Calendar.getInstance()
+    val top10Today = remember(catalog) {
+        rotateTop(catalog.sortedByDescending { it.score ?: 0.0 }, cal.get(java.util.Calendar.DAY_OF_YEAR))
+    }
+    val top10Week = remember(catalog) {
+        rotateTop(
+            catalog.sortedWith(compareByDescending<Title> { it.episodes.size }.thenByDescending { it.score ?: 0.0 }),
+            cal.get(java.util.Calendar.WEEK_OF_YEAR),
+        )
+    }
+    val top10Month = remember(catalog) {
+        rotateTop(
+            catalog.sortedWith(compareByDescending<Title> { it.year ?: 0 }.thenByDescending { it.score ?: 0.0 }),
+            cal.get(java.util.Calendar.MONTH) + 1,
+        )
+    }
+    val bottomPad = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() + FloatingNavBarHeight + 16.dp
+    LazyColumn(contentPadding = PaddingValues(bottom = bottomPad), verticalArrangement = Arrangement.spacedBy(26.dp)) {
+        item { SpotlightHero(heroPicks, favs, onSelect = onSelect, onFav = onFav, onSearch = onSearch) }
+        item { PosterRail("Spotlight", spotlight, onSelect) }
+        item { PosterRail("Trending", trending, onSelect) }
+        item { PosterRail("Most Popular", mostPopular, onSelect) }
+        item { PosterRail("Most Watched", mostWatched, onSelect) }
+        item { PosterRail("Top Airing", topAiring, onSelect) }
+        item { PosterRail("Top 10 Today", top10Today, onSelect) }
+        item { PosterRail("Top 10 Week", top10Week, onSelect) }
+        item { PosterRail("Top 10 Month", top10Month, onSelect) }
         item {
             Text(
                 "${catalog.size} judul · ${catalog.sumOf { it.episodes.size }} episode",
@@ -312,6 +340,180 @@ private fun HomeTab(
                 color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp,
             )
         }
+    }
+}
+
+/** Geser jendela 10 besar dari kumpulan 40 teratas; benihnya hari/minggu/bulan berjalan. */
+private fun rotateTop(sorted: List<Title>, seed: Int): List<Title> {
+    val pool = sorted.take(40)
+    if (pool.size <= 10) return pool
+    val start = seed % pool.size
+    return (pool.drop(start) + pool.take(start)).take(10)
+}
+
+/**
+ * Panggung utama ala aplikasi contoh: banner penuh selebar layar sampai ke tepi atas,
+ * judul besar di tengah, lencana, baris info, genre, lalu Bagikan · Detail · Koleksi.
+ * Bergeser otomatis tiap 6 detik; bisa digeser manual. Warna tetap Renkai (kuning).
+ */
+@Composable
+private fun SpotlightHero(
+    picks: List<Title>,
+    favs: List<Title>,
+    onSelect: (Title) -> Unit,
+    onFav: (Title) -> Unit,
+    onSearch: () -> Unit,
+) {
+    if (picks.isEmpty()) {
+        AppHeader(onSearch, Modifier.statusBarsPadding().padding(start = 20.dp, end = 8.dp, top = 8.dp))
+        return
+    }
+    val pagerState = rememberPagerState(pageCount = { picks.size })
+    LaunchedEffect(pagerState, picks.size) {
+        while (true) {
+            delay(6000)
+            if (!pagerState.isScrollInProgress && picks.size > 1) {
+                pagerState.animateScrollToPage((pagerState.currentPage + 1) % picks.size)
+            }
+        }
+    }
+    val context = LocalContext.current
+    Box(Modifier.fillMaxWidth().height(560.dp)) {
+        HorizontalPager(state = pagerState, modifier = Modifier.fillMaxSize()) { page ->
+            val t = picks[page]
+            Box(Modifier.fillMaxSize()) {
+                AsyncImage(t.banner ?: t.poster, t.title, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                Box(
+                    Modifier.fillMaxSize().background(
+                        Brush.verticalGradient(
+                            0.0f to Color.Black.copy(alpha = 0.32f),
+                            0.42f to Color.Transparent,
+                            0.76f to MaterialTheme.colorScheme.background.copy(alpha = 0.74f),
+                            1.0f to MaterialTheme.colorScheme.background,
+                        ),
+                    ),
+                )
+                Column(
+                    Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(horizontal = 24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Text(
+                        t.title, color = Color.White, fontSize = 27.sp, fontWeight = FontWeight.Black,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                        maxLines = 2, overflow = TextOverflow.Ellipsis,
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        HeroChip(if (t.episodes.size == 1) "Film" else "Serial")
+                        t.statusLabel?.let { HeroChip(it) }
+                        t.score?.let { HeroChip(String.format(Locale.US, "%.1f", it)) }
+                    }
+                    val meta = listOfNotNull(
+                        t.year?.toString(),
+                        t.statusLabel,
+                        t.score?.let { "★ " + String.format(Locale.US, "%.1f", it) },
+                    ).joinToString("  ·  ")
+                    if (meta.isNotBlank()) {
+                        Text(meta, color = Color.White.copy(alpha = 0.88f), fontSize = 13.sp)
+                    }
+                    if (t.genres.isNotEmpty()) {
+                        Text(t.genres.take(3).joinToString(", "), color = Color.White.copy(alpha = 0.88f), fontSize = 13.sp)
+                    }
+                    Row(
+                        Modifier.fillMaxWidth().padding(top = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceEvenly,
+                    ) {
+                        HeroSideAction(Icons.Rounded.Share, "Bagikan") {
+                            val intent = Intent(Intent.ACTION_SEND).apply {
+                                type = "text/plain"
+                                putExtra(Intent.EXTRA_TEXT, "Nonton ${t.title} di Renkai")
+                            }
+                            runCatching { context.startActivity(Intent.createChooser(intent, "Bagikan")) }
+                        }
+                        Button(
+                            onClick = { onSelect(t) },
+                            shape = RoundedCornerShape(50),
+                            modifier = Modifier.height(50.dp).width(180.dp),
+                            contentPadding = PaddingValues(horizontal = 12.dp),
+                        ) {
+                            Icon(Icons.Rounded.Info, null, Modifier.size(20.dp))
+                            Spacer(Modifier.size(6.dp))
+                            Text("Detail", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                        }
+                        val fav = favs.any { it.id == t.id }
+                        HeroSideAction(
+                            if (fav) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
+                            "Koleksi",
+                            tint = if (fav) MaterialTheme.colorScheme.primary else Color.White,
+                        ) { onFav(t) }
+                    }
+                }
+            }
+        }
+        AppHeader(onSearch, Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(start = 20.dp, end = 8.dp, top = 4.dp))
+    }
+}
+
+@Composable
+private fun HeroChip(text: String) {
+    Box(
+        Modifier.clip(RoundedCornerShape(7.dp)).background(Color.White.copy(alpha = 0.22f))
+            .padding(horizontal = 8.dp, vertical = 3.dp),
+    ) {
+        Text(text, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+    }
+}
+
+@Composable
+private fun HeroSideAction(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    tint: Color = Color.White,
+    onClick: () -> Unit,
+) {
+    Column(
+        Modifier.clip(RoundedCornerShape(12.dp)).clickable(onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 4.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(3.dp),
+    ) {
+        Icon(icon, label, Modifier.size(24.dp), tint = tint)
+        Text(label, color = Color.White, fontSize = 12.sp)
+    }
+}
+
+/** Satu rak poster horizontal dengan judul besar, seperti aplikasi contoh. */
+@Composable
+private fun PosterRail(title: String, list: List<Title>, onSelect: (Title) -> Unit) {
+    if (list.isEmpty()) return
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text(title, Modifier.padding(horizontal = 20.dp), fontSize = 21.sp, fontWeight = FontWeight.Black)
+        LazyRow(contentPadding = PaddingValues(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            items(list) { t -> RailPoster(t, onSelect) }
+        }
+    }
+}
+
+@Composable
+private fun RailPoster(t: Title, onSelect: (Title) -> Unit) {
+    Box(
+        Modifier.width(122.dp).aspectRatio(2f / 3f).clip(RoundedCornerShape(12.dp))
+            .background(Color(0xFF222225)).clickable { onSelect(t) },
+    ) {
+        if (t.poster != null) {
+            AsyncImage(t.poster, t.title, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+        }
+        Box(
+            Modifier.fillMaxSize().background(
+                Brush.verticalGradient(0.52f to Color.Transparent, 1.0f to Color.Black.copy(alpha = 0.84f)),
+            ),
+        )
+        Text(
+            t.title, Modifier.align(Alignment.BottomStart).padding(8.dp),
+            color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold,
+            maxLines = 2, overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 
@@ -659,83 +861,6 @@ private fun Logo(modifier: Modifier = Modifier) {
         Box(Modifier.size(12.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary))
         Spacer(Modifier.size(10.dp))
         Text("RENKAI", fontSize = 24.sp, fontWeight = FontWeight.Black, letterSpacing = 6.sp)
-    }
-}
-
-@Composable
-private fun Section(title: String, content: @Composable () -> Unit) {
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text(title, Modifier.padding(horizontal = 20.dp), fontSize = 18.sp, fontWeight = FontWeight.Bold)
-        content()
-    }
-}
-
-@Composable
-private fun Hero(t: Title, fav: Boolean, onPlay: (Episode) -> Unit, onFav: () -> Unit, onSelect: () -> Unit) {
-    Box(Modifier.padding(horizontal = 20.dp).fillMaxWidth().height(250.dp).clip(RoundedCornerShape(28.dp)).background(Color(0xFF1A1A1C))) {
-        if (t.banner != null) {
-            AsyncImage(t.banner, t.title, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
-        }
-        Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.78f)))))
-        Column(Modifier.align(Alignment.BottomStart).padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            TypeBadge("UNGGULAN")
-            Text(t.title, color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.Black, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            val meta = listOfNotNull(
-                t.matchPercent?.let { "$it% cocok" }, t.year?.toString(), t.statusLabel, "${t.episodes.size} episode",
-            ).joinToString(" · ")
-            Text(meta, color = Color(0xFFE8E4D0), fontSize = 13.sp)
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Button(onClick = { t.episodes.firstOrNull()?.let(onPlay) }, shape = RoundedCornerShape(14.dp)) {
-                    Icon(Icons.Rounded.PlayArrow, null); Spacer(Modifier.size(4.dp)); Text("Putar", fontWeight = FontWeight.Bold)
-                }
-                OutlinedButton(
-                    onClick = onSelect, shape = RoundedCornerShape(14.dp),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
-                ) { Icon(Icons.Rounded.Info, null); Spacer(Modifier.size(4.dp)); Text("Detail") }
-                OutlinedButton(
-                    onClick = onFav, shape = RoundedCornerShape(14.dp),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
-                ) { Icon(if (fav) Icons.Rounded.Check else Icons.Rounded.Add, null); Spacer(Modifier.size(4.dp)); Text("Koleksi") }
-            }
-        }
-    }
-}
-
-@Composable
-private fun TypeBadge(text: String) {
-    Box(Modifier.clip(RoundedCornerShape(8.dp)).background(MaterialTheme.colorScheme.primary).padding(horizontal = 8.dp, vertical = 4.dp)) {
-        Text(text, color = MaterialTheme.colorScheme.onPrimary, fontSize = 11.sp, fontWeight = FontWeight.Black)
-    }
-}
-
-@Composable
-private fun WideCard(t: Title, onSelect: (Title) -> Unit) {
-    Box(Modifier.width(240.dp).height(135.dp).clip(RoundedCornerShape(20.dp)).background(Color(0xFF222225)).clickable { onSelect(t) }) {
-        if (t.banner != null) {
-            AsyncImage(t.banner, t.title, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
-        }
-        Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.72f)))))
-        Icon(Icons.Rounded.PlayArrow, null, Modifier.align(Alignment.Center).size(40.dp), tint = Color.White.copy(alpha = 0.9f))
-        Text(t.title, Modifier.align(Alignment.BottomStart).padding(12.dp), color = Color.White, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-    }
-}
-
-@Composable
-private fun PosterRow(list: List<Title>, onSelect: (Title) -> Unit, hPad: androidx.compose.ui.unit.Dp = 20.dp) {
-    LazyRow(contentPadding = PaddingValues(horizontal = hPad), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        items(list) { t ->
-            Column(Modifier.width(120.dp).clickable { onSelect(t) }, verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Box(Modifier.fillMaxWidth().aspectRatio(2f / 3f).clip(RoundedCornerShape(16.dp)).background(Color(0xFF222225))) {
-                    if (t.poster != null) {
-                        AsyncImage(t.poster, t.title, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
-                    }
-                    t.matchPercent?.let {
-                        Box(Modifier.padding(8.dp)) { TypeBadge("$it%") }
-                    }
-                }
-                Text(t.title, maxLines = 2, overflow = TextOverflow.Ellipsis, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-            }
-        }
     }
 }
 
