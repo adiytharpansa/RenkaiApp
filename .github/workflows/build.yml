@@ -25,12 +25,12 @@ jobs:
         with:
           name: Renkai-release-apk
           path: app/build/outputs/apk/release/app-release.apk
-      - name: Terbitkan APK ke Release v1.0 (khusus dispatch manual)
+      - name: Terbitkan APK ke Release v1.1 (khusus dispatch manual)
         if: github.event_name == 'workflow_dispatch'
         run: |
-          gh release create v1.0 app/build/outputs/apk/release/app-release.apk \
-            --title "Renkai v1.0" \
-            --notes "Renkai v1.0 — aplikasi asli terhubung katalog: beranda/cari/detail/koleksi, pemutar HLS multi-pintu + subtitle Inggris & Indonesia." \
-          || gh release upload v1.0 app/build/outputs/apk/release/app-release.apk --clobber
+          gh release create v1.1 app/build/outputs/apk/release/app-release.apk \
+            --title "Renkai v1.1" \
+            --notes "Renkai v1.1 — identitas katalog sendiri: katalog dilayani dari Cloudflare Pages Renkai (renkai-catalog) dengan kunci enkripsi Renkai sendiri, lepas dari Anilover." \
+          || gh release upload v1.1 app/build/outputs/apk/release/app-release.apk --clobber
         env:
           GH_TOKEN: ${{ github.token }}
