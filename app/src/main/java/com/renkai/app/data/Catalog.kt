@@ -46,7 +46,7 @@ data class Title(
 // disinkronkan otomatis dari repo gudang). Cermin: jsDelivr beberapa edge +
 // raw GitHub (JSON polos) — decodeCatalogBody menerima kedua bentuk.
 private const val CATALOG_PAGES =
-    "https://anilover-catalog.pages.dev/da163150ab26d6059ec10153/lib.dat"
+    "https://renkai-catalog.pages.dev/57601a04df504659829aa8f0/lib.dat"
 private val CATALOG_MIRRORS = listOf(
     "https://cdn.jsdelivr.net/gh/adiytharpansa/xjatxz2upew4@main/catalog.json",
     "https://gcore.jsdelivr.net/gh/adiytharpansa/xjatxz2upew4@main/catalog.json",
@@ -96,7 +96,7 @@ object CatalogApi {
         val masked = Base64.decode(BuildConfig.CATALOG_KEY_X, Base64.DEFAULT)
         require(masked.size == 32) { "kunci katalog tidak tersedia" }
         val mask = MessageDigest.getInstance("SHA-256")
-            .digest("anilover-katalog-v1".toByteArray(Charsets.UTF_8))
+            .digest("renkai-katalog-v1".toByteArray(Charsets.UTF_8))
         val key = ByteArray(32) { i -> (masked[i].toInt() xor mask[i].toInt()).toByte() }
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(
