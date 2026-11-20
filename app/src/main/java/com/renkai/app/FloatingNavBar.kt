@@ -28,6 +28,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 
+/** Tinggi total navbar (pil 52dp + jarak atas/bawah 12dp); dipakai untuk padding isi daftar. */
+val FloatingNavBarHeight = 76.dp
+
 data class NavItem(val label: String, val icon: ImageVector)
 
 /** Tab utama. Tambah item baru di sini untuk menambah ikon di navbar. */

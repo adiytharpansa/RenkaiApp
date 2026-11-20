@@ -216,27 +216,35 @@ fun RenkaiApp(autoTitle: String? = null, autoEp: Int = 1) {
         )
         cat == null && loadError == null -> LoadingScreen()
         cat == null -> ErrorScreen(loadError ?: "Gagal memuat katalog") { retryKey++ }
-        else -> Scaffold(
-            containerColor = MaterialTheme.colorScheme.background,
-            bottomBar = {
-                FloatingNavBar(MainNavItems, if (searchOpen) -1 else tab, onSelect = { tab = it; searchOpen = false })
-            },
-        ) { pad ->
-            Box(Modifier.padding(pad).statusBarsPadding()) {
-                when {
-                    searchOpen -> SearchTab(cat, onSelect = { selected = it }, onPlayLink = ::playLink)
-                    tab == 0 -> HomeTab(
-                        cat, favs, onSelect = { selected = it }, onPlay = { t, ep -> play(t, ep) },
-                        onFav = ::toggleFav, onSearch = { searchOpen = true },
-                    )
-                    tab == 1 -> ScheduleTab(cat, onSelect = { selected = it }, onSearch = { searchOpen = true })
-                    tab == 2 -> CollectionTab(favs, onSelect = { selected = it }, onSearch = { searchOpen = true })
-                    tab == 3 -> DownloadsTab(onSearch = { searchOpen = true })
-                    else -> ProfileTab(favs.size, cat.size, onSearch = { searchOpen = true })
-                }
+        else -> Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+            // Konten memenuhi layar penuh (tembus ke belakang status bar dan navbar);
+            // jarak aman diberikan lewat contentPadding, bukan memotong area konten.
+            when {
+                searchOpen -> SearchTab(cat, onSelect = { selected = it }, onPlayLink = ::playLink)
+                tab == 0 -> HomeTab(
+                    cat, favs, onSelect = { selected = it }, onPlay = { t, ep -> play(t, ep) },
+                    onFav = ::toggleFav, onSearch = { searchOpen = true },
+                )
+                tab == 1 -> ScheduleTab(cat, onSelect = { selected = it }, onSearch = { searchOpen = true })
+                tab == 2 -> CollectionTab(favs, onSelect = { selected = it }, onSearch = { searchOpen = true })
+                tab == 3 -> DownloadsTab(onSearch = { searchOpen = true })
+                else -> ProfileTab(favs.size, cat.size, onSearch = { searchOpen = true })
             }
+            FloatingNavBar(
+                MainNavItems, if (searchOpen) -1 else tab,
+                onSelect = { tab = it; searchOpen = false },
+                modifier = Modifier.align(Alignment.BottomCenter),
+            )
         }
     }
+}
+
+/** Padding isi daftar: lewati status bar di atas dan navbar melayang di bawah. */
+@Composable
+private fun mainContentPadding(): PaddingValues {
+    val top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+    val bottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+    return PaddingValues(top = top + 8.dp, bottom = bottom + FloatingNavBarHeight + 16.dp)
 }
 
 @Composable
@@ -281,7 +289,7 @@ private fun HomeTab(
         catalog.flatMap { it.genres }.groupingBy { it }.eachCount().entries
             .sortedByDescending { it.value }.take(4).map { it.key }
     }
-    LazyColumn(contentPadding = PaddingValues(bottom = 16.dp), verticalArrangement = Arrangement.spacedBy(22.dp)) {
+    LazyColumn(contentPadding = mainContentPadding(), verticalArrangement = Arrangement.spacedBy(22.dp)) {
         item { AppHeader(onSearch, Modifier.padding(start = 20.dp, end = 8.dp, top = 8.dp)) }
         if (hero != null) {
             item { Hero(hero, favs.any { it.id == hero.id }, onPlay = { ep -> onPlay(hero, ep) }, onFav = { onFav(hero) }, onSelect = { onSelect(hero) }) }
@@ -315,7 +323,7 @@ private fun SearchTab(catalog: List<Title>, onSelect: (Title) -> Unit, onPlayLin
         if (q.isBlank()) emptyList()
         else catalog.filter { it.title.contains(q, true) || it.genres.any { g -> g.contains(q, true) } }.take(60)
     }
-    LazyColumn(Modifier.padding(horizontal = 20.dp), contentPadding = PaddingValues(vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    LazyColumn(Modifier.padding(horizontal = 20.dp), contentPadding = mainContentPadding(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item { Logo() }
         item {
             OutlinedTextField(
@@ -343,7 +351,7 @@ private fun SearchTab(catalog: List<Title>, onSelect: (Title) -> Unit, onPlayLin
 
 @Composable
 private fun CollectionTab(favs: List<Title>, onSelect: (Title) -> Unit, onSearch: () -> Unit) {
-    LazyColumn(Modifier.padding(horizontal = 20.dp), contentPadding = PaddingValues(vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    LazyColumn(Modifier.padding(horizontal = 20.dp), contentPadding = mainContentPadding(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item { AppHeader(onSearch) }
         item { Text("Koleksi", fontSize = 20.sp, fontWeight = FontWeight.Bold) }
         if (favs.isEmpty()) {
@@ -357,7 +365,7 @@ private fun CollectionTab(favs: List<Title>, onSelect: (Title) -> Unit, onSearch
 @Composable
 private fun ScheduleTab(catalog: List<Title>, onSelect: (Title) -> Unit, onSearch: () -> Unit) {
     val airing = remember(catalog) { catalog.filter { it.status == "RELEASING" }.take(60) }
-    LazyColumn(Modifier.padding(horizontal = 20.dp), contentPadding = PaddingValues(vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    LazyColumn(Modifier.padding(horizontal = 20.dp), contentPadding = mainContentPadding(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item { AppHeader(onSearch) }
         item { Text("Jadwal", fontSize = 20.sp, fontWeight = FontWeight.Bold) }
         item { Text("Judul yang sedang tayang.", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
@@ -371,7 +379,7 @@ private fun ScheduleTab(catalog: List<Title>, onSelect: (Title) -> Unit, onSearc
 
 @Composable
 private fun DownloadsTab(onSearch: () -> Unit) {
-    LazyColumn(Modifier.padding(horizontal = 20.dp), contentPadding = PaddingValues(vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    LazyColumn(Modifier.padding(horizontal = 20.dp), contentPadding = mainContentPadding(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item { AppHeader(onSearch) }
         item { Text("Unduhan", fontSize = 20.sp, fontWeight = FontWeight.Bold) }
         item {
@@ -388,7 +396,7 @@ private fun ProfileTab(favCount: Int, titleCount: Int, onSearch: () -> Unit) {
     val context = LocalContext.current
     fun langName(code: String) = Locale.forLanguageTag(code)
         .getDisplayLanguage(Locale.forLanguageTag("id")).replaceFirstChar { it.titlecase(Locale.ROOT) }
-    LazyColumn(Modifier.padding(horizontal = 20.dp), contentPadding = PaddingValues(vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    LazyColumn(Modifier.padding(horizontal = 20.dp), contentPadding = mainContentPadding(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item { AppHeader(onSearch) }
         item {
             Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -422,14 +430,17 @@ private fun DetailScreen(
     t: Title, fav: Boolean,
     onBack: () -> Unit, onFav: () -> Unit, onPlayEp: (Episode) -> Unit,
 ) {
-    LazyColumn(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).statusBarsPadding()) {
+    LazyColumn(
+        Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background),
+        contentPadding = WindowInsets.navigationBars.asPaddingValues(),
+    ) {
         item {
-            Box(Modifier.fillMaxWidth().height(210.dp).background(Color.Black)) {
+            Box(Modifier.fillMaxWidth().height(210.dp + WindowInsets.statusBars.asPaddingValues().calculateTopPadding()).background(Color.Black)) {
                 if (t.banner != null) {
                     AsyncImage(t.banner, t.title, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
                 }
                 Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.65f)))))
-                IconButton(onClick = onBack, modifier = Modifier.padding(4.dp)) {
+                IconButton(onClick = onBack, modifier = Modifier.statusBarsPadding().padding(4.dp)) {
                     Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Kembali", tint = Color.White)
                 }
                 Text(
