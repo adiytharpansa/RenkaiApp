@@ -3,6 +3,7 @@ package com.renkai.app
 import android.app.Activity
 import android.content.res.Configuration
 import android.view.LayoutInflater
+import android.view.View
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -48,6 +49,7 @@ import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
@@ -75,7 +77,16 @@ fun RenkaiApp(autoTitle: String? = null, autoEp: Int = 1) {
     val view = LocalView.current
     val scope = rememberCoroutineScope()
     val playbackRequests = remember { PlaybackRequestGate() }
-    val player = remember { ExoPlayer.Builder(context).build().apply { playWhenReady = true } }
+    val player = remember {
+        ExoPlayer.Builder(context).build().apply {
+            playWhenReady = true
+            // Subtitle otomatis mengikuti bahasa aplikasi (fallback: Indonesia, Inggris).
+            // Kualitas video bersifat adaptif (ABR) selama tidak dikunci lewat menu pemutar.
+            trackSelectionParameters = trackSelectionParameters.buildUpon()
+                .setPreferredTextLanguages(*AppLanguage.subtitlePreference(context))
+                .build()
+        }
+    }
     var error by remember { mutableStateOf<String?>(null) }
     var playing by remember { mutableStateOf<PlayTarget?>(null) }
     var selected by remember { mutableStateOf<Title?>(null) }
@@ -113,6 +124,10 @@ fun RenkaiApp(autoTitle: String? = null, autoEp: Int = 1) {
         error = null
         playing = PlayTarget(t, ep)
         val requestId = playbackRequests.issue()
+        // Setiap episode baru mulai lagi dari kualitas otomatis (ABR).
+        player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+            .clearOverridesOfType(C.TRACK_TYPE_VIDEO)
+            .build()
         scope.launch {
             val url = CatalogApi.pickDoor(ep.playlist)
             if (!playbackRequests.isCurrent(requestId)) return@launch
@@ -167,7 +182,20 @@ fun RenkaiApp(autoTitle: String? = null, autoEp: Int = 1) {
     val sel = selected
     val cat = catalog
     when {
-        fullscreen -> Box(Modifier.fillMaxSize().background(Color.Black)) { PlayerSurface(player, Modifier.fillMaxSize()) }
+        fullscreen -> {
+            // Tombol kualitas/subtitle hanya tampil bersama kontrol pemutar.
+            var controlsVisible by remember { mutableStateOf(true) }
+            Box(Modifier.fillMaxSize().background(Color.Black)) {
+                PlayerSurface(player, Modifier.fillMaxSize(), onControlsVisibility = { controlsVisible = it })
+                if (controlsVisible) {
+                    PlaybackSettingsButton(
+                        player,
+                        Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(12.dp),
+                        compact = true,
+                    )
+                }
+            }
+        }
         cur != null -> PlayerScreen(
             player, cur, error,
             favs.any { it.id == cur.title.id },
@@ -463,6 +491,7 @@ private fun PlayerScreen(
                     }
                 }
             }
+            item { PlaybackSettingsButton(player, Modifier.fillMaxWidth()) }
             if (canComment) {
                 item {
                     TabRow(
@@ -650,11 +679,23 @@ private fun ListRow(t: Title, onSelect: (Title) -> Unit) {
 }
 
 @Composable
-private fun PlayerSurface(player: Player, modifier: Modifier = Modifier) {
+private fun PlayerSurface(
+    player: Player,
+    modifier: Modifier = Modifier,
+    onControlsVisibility: ((Boolean) -> Unit)? = null,
+) {
+    val visibilityCallback by rememberUpdatedState(onControlsVisibility)
     AndroidView(
         modifier = modifier,
-        factory = { ctx -> (LayoutInflater.from(ctx).inflate(R.layout.player_view, null) as PlayerView).also { it.player = player } },
+        factory = { ctx ->
+            (LayoutInflater.from(ctx).inflate(R.layout.player_view, null) as PlayerView).also { pv ->
+                pv.player = player
+                pv.setControllerVisibilityListener(
+                    PlayerView.ControllerVisibilityListener { v -> visibilityCallback?.invoke(v == View.VISIBLE) },
+                )
+            }
+        },
         update = { it.player = player },
-        onRelease = { it.player = null },
+        onRelease = { it.setControllerVisibilityListener(null as PlayerView.ControllerVisibilityListener?); it.player = null },
     )
 }
