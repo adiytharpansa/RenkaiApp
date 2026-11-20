@@ -1,13 +1,10 @@
 package com.renkai.app.ui
 
 import androidx.compose.foundation.isSystemInDarkTheme
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 
 val RenkaiYellow = Color(0xFFFFD60A)
@@ -40,22 +37,11 @@ private val LightColors = lightColorScheme(
     outline = Color(0xFFCFC6A0),
 )
 
-/**
- * Terang/gelap otomatis mengikuti sistem, aksen kuning.
- *
- * Isi dibungkus Surface supaya warna teks/ikon bawaan (LocalContentColor)
- * mengikuti tema. Tanpa ini teks yang tidak diberi warna jadi hitam di atas
- * latar gelap (judul, "Episode lainnya", tombol kembali, layar muat/galat).
- */
+/** Terang/gelap otomatis mengikuti sistem, aksen kuning. */
 @Composable
 fun RenkaiTheme(content: @Composable () -> Unit) {
-    val colors = if (isSystemInDarkTheme()) DarkColors else LightColors
-    MaterialTheme(colorScheme = colors) {
-        Surface(
-            modifier = Modifier.fillMaxSize(),
-            color = MaterialTheme.colorScheme.background,
-            contentColor = MaterialTheme.colorScheme.onBackground,
-            content = content,
-        )
-    }
+    MaterialTheme(
+        colorScheme = if (isSystemInDarkTheme()) DarkColors else LightColors,
+        content = content,
+    )
 }
