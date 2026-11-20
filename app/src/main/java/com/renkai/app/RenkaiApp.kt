@@ -15,6 +15,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Favorite
@@ -65,6 +66,7 @@ import com.renkai.app.data.Title
 import com.renkai.app.ui.CommentComposer
 import com.renkai.app.ui.CommentRow
 import kotlinx.coroutines.launch
+import java.util.Locale
 
 private data class PlayTarget(val title: Title, val episode: Episode)
 
@@ -91,6 +93,7 @@ fun RenkaiApp(autoTitle: String? = null, autoEp: Int = 1) {
     var playing by remember { mutableStateOf<PlayTarget?>(null) }
     var selected by remember { mutableStateOf<Title?>(null) }
     var tab by rememberSaveable { mutableIntStateOf(0) }
+    var searchOpen by rememberSaveable { mutableStateOf(false) }
     val favs = remember { mutableStateListOf<Title>() }
 
     var catalog by remember { mutableStateOf<List<Title>?>(null) }
@@ -166,6 +169,7 @@ fun RenkaiApp(autoTitle: String? = null, autoEp: Int = 1) {
 
     BackHandler(enabled = playing != null) { closePlayer() }
     BackHandler(enabled = playing == null && selected != null) { selected = null }
+    BackHandler(enabled = playing == null && selected == null && searchOpen) { searchOpen = false }
 
     val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
     val fullscreen = landscape && playing != null
@@ -215,27 +219,20 @@ fun RenkaiApp(autoTitle: String? = null, autoEp: Int = 1) {
         else -> Scaffold(
             containerColor = MaterialTheme.colorScheme.background,
             bottomBar = {
-                NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
-                    listOf("Beranda" to Icons.Rounded.Home, "Cari" to Icons.Rounded.Search, "Koleksi" to Icons.Rounded.Favorite)
-                        .forEachIndexed { i, (label, icon) ->
-                            NavigationBarItem(
-                                selected = tab == i, onClick = { tab = i },
-                                icon = { Icon(icon, label) }, label = { Text(label) },
-                                colors = NavigationBarItemDefaults.colors(
-                                    indicatorColor = MaterialTheme.colorScheme.primary,
-                                    selectedIconColor = MaterialTheme.colorScheme.onPrimary,
-                                    selectedTextColor = MaterialTheme.colorScheme.onBackground,
-                                ),
-                            )
-                        }
-                }
+                FloatingNavBar(MainNavItems, if (searchOpen) -1 else tab, onSelect = { tab = it; searchOpen = false })
             },
         ) { pad ->
             Box(Modifier.padding(pad).statusBarsPadding()) {
-                when (tab) {
-                    0 -> HomeTab(cat, favs, onSelect = { selected = it }, onPlay = { t, ep -> play(t, ep) }, onFav = ::toggleFav)
-                    1 -> SearchTab(cat, onSelect = { selected = it }, onPlayLink = ::playLink)
-                    else -> CollectionTab(favs, onSelect = { selected = it })
+                when {
+                    searchOpen -> SearchTab(cat, onSelect = { selected = it }, onPlayLink = ::playLink)
+                    tab == 0 -> HomeTab(
+                        cat, favs, onSelect = { selected = it }, onPlay = { t, ep -> play(t, ep) },
+                        onFav = ::toggleFav, onSearch = { searchOpen = true },
+                    )
+                    tab == 1 -> ScheduleTab(cat, onSelect = { selected = it }, onSearch = { searchOpen = true })
+                    tab == 2 -> CollectionTab(favs, onSelect = { selected = it }, onSearch = { searchOpen = true })
+                    tab == 3 -> DownloadsTab(onSearch = { searchOpen = true })
+                    else -> ProfileTab(favs.size, cat.size, onSearch = { searchOpen = true })
                 }
             }
         }
@@ -274,6 +271,7 @@ private fun HomeTab(
     onSelect: (Title) -> Unit,
     onPlay: (Title, Episode) -> Unit,
     onFav: (Title) -> Unit,
+    onSearch: () -> Unit,
 ) {
     val hero = remember(catalog) { catalog.filter { it.banner != null }.maxByOrNull { it.score ?: 0.0 } }
     val trending = remember(catalog) { catalog.sortedByDescending { it.score ?: 0.0 }.take(20) }
@@ -284,7 +282,7 @@ private fun HomeTab(
             .sortedByDescending { it.value }.take(4).map { it.key }
     }
     LazyColumn(contentPadding = PaddingValues(bottom = 16.dp), verticalArrangement = Arrangement.spacedBy(22.dp)) {
-        item { Logo(Modifier.padding(start = 20.dp, top = 16.dp)) }
+        item { AppHeader(onSearch, Modifier.padding(start = 20.dp, end = 8.dp, top = 8.dp)) }
         if (hero != null) {
             item { Hero(hero, favs.any { it.id == hero.id }, onPlay = { ep -> onPlay(hero, ep) }, onFav = { onFav(hero) }, onSelect = { onSelect(hero) }) }
         }
@@ -344,14 +342,77 @@ private fun SearchTab(catalog: List<Title>, onSelect: (Title) -> Unit, onPlayLin
 }
 
 @Composable
-private fun CollectionTab(favs: List<Title>, onSelect: (Title) -> Unit) {
+private fun CollectionTab(favs: List<Title>, onSelect: (Title) -> Unit, onSearch: () -> Unit) {
     LazyColumn(Modifier.padding(horizontal = 20.dp), contentPadding = PaddingValues(vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        item { Logo() }
+        item { AppHeader(onSearch) }
         item { Text("Koleksi", fontSize = 20.sp, fontWeight = FontWeight.Bold) }
         if (favs.isEmpty()) {
             item { Text("Belum ada koleksi. Buka judul lalu tekan “Koleksi” untuk menyimpannya di sini (tersimpan selama aplikasi terbuka).", color = MaterialTheme.colorScheme.onSurfaceVariant) }
         } else {
             items(favs) { t -> ListRow(t, onSelect) }
+        }
+    }
+}
+
+@Composable
+private fun ScheduleTab(catalog: List<Title>, onSelect: (Title) -> Unit, onSearch: () -> Unit) {
+    val airing = remember(catalog) { catalog.filter { it.status == "RELEASING" }.take(60) }
+    LazyColumn(Modifier.padding(horizontal = 20.dp), contentPadding = PaddingValues(vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        item { AppHeader(onSearch) }
+        item { Text("Jadwal", fontSize = 20.sp, fontWeight = FontWeight.Bold) }
+        item { Text("Judul yang sedang tayang.", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        if (airing.isEmpty()) {
+            item { Text("Belum ada judul yang sedang tayang di katalog.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        } else {
+            items(airing) { t -> ListRow(t, onSelect) }
+        }
+    }
+}
+
+@Composable
+private fun DownloadsTab(onSearch: () -> Unit) {
+    LazyColumn(Modifier.padding(horizontal = 20.dp), contentPadding = PaddingValues(vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        item { AppHeader(onSearch) }
+        item { Text("Unduhan", fontSize = 20.sp, fontWeight = FontWeight.Bold) }
+        item {
+            Text(
+                "Belum ada unduhan. Fitur menonton offline belum tersedia di versi ini.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+@Composable
+private fun ProfileTab(favCount: Int, titleCount: Int, onSearch: () -> Unit) {
+    val context = LocalContext.current
+    fun langName(code: String) = Locale.forLanguageTag(code)
+        .getDisplayLanguage(Locale.forLanguageTag("id")).replaceFirstChar { it.titlecase(Locale.ROOT) }
+    LazyColumn(Modifier.padding(horizontal = 20.dp), contentPadding = PaddingValues(vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        item { AppHeader(onSearch) }
+        item {
+            Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Box(Modifier.size(72.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary), contentAlignment = Alignment.Center) {
+                    Icon(Icons.Outlined.Person, null, Modifier.size(36.dp), tint = MaterialTheme.colorScheme.onPrimary)
+                }
+                Text("Tamu", fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                Text("Profil lokal di perangkat ini", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        item { InfoRow("Koleksi", "$favCount judul") }
+        item { InfoRow("Katalog", "$titleCount judul") }
+        item { InfoRow("Bahasa aplikasi", langName(AppLanguage.current(context))) }
+        item { InfoRow("Bahasa subtitle", AppLanguage.subtitlePreference(context).joinToString(", ") { langName(it) }) }
+        item { InfoRow("Versi", BuildConfig.VERSION_NAME) }
+    }
+}
+
+@Composable
+private fun InfoRow(label: String, value: String) {
+    Surface(shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.surfaceVariant, modifier = Modifier.fillMaxWidth()) {
+        Row(Modifier.padding(horizontal = 14.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(label, Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
+            Text(value, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
 }
@@ -566,6 +627,17 @@ private fun EpisodeRow(
                 ep.title?.let { Text(it, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant) }
             }
             if (current) Text("Diputar", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+        }
+    }
+}
+
+/** Logo di kiri, ikon cari di kanan atas. */
+@Composable
+private fun AppHeader(onSearch: () -> Unit, modifier: Modifier = Modifier) {
+    Row(modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+        Logo()
+        IconButton(onClick = onSearch) {
+            Icon(Icons.Rounded.Search, "Cari", Modifier.size(26.dp), tint = MaterialTheme.colorScheme.onSurface)
         }
     }
 }
